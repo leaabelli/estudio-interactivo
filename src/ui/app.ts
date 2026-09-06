@@ -211,6 +211,7 @@ class Application {
   private renderedView: View | null = null;
   private snackbarTimer: number | null = null;
   private shownNoticeKey = "";
+  private readonly routeScrollPositions = new Map<RouteView, number>();
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -256,6 +257,7 @@ class Application {
         persistent: true,
       };
     }
+    history.scrollRestoration = "manual";
     window.addEventListener("popstate", () => this.restoreRouteFromHistory());
     this.render();
   }
@@ -265,6 +267,11 @@ class Application {
     focus = true,
     historyMode: "push" | "replace" | "none" = "push",
   ): void {
+    const previousView = this.view;
+    const routeChanged = previousView !== view;
+    if (routeChanged && this.isRouteView(previousView)) {
+      this.routeScrollPositions.set(previousView, window.scrollY);
+    }
     this.view = view;
     if (this.isRouteView(view) && historyMode !== "none") {
       const targetHash = hashForRoute(view);
@@ -272,9 +279,10 @@ class Application {
       else if (location.hash !== targetHash) history.pushState({ view }, "", targetHash);
     }
     this.render();
-    if (focus) {
+    if (routeChanged || focus) {
       requestAnimationFrame(() => {
-        this.shellRefs?.outlet.querySelector<HTMLElement>(".route-title")?.focus({ preventScroll: true });
+        if (routeChanged) window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        if (focus) this.shellRefs?.outlet.querySelector<HTMLElement>(".route-title")?.focus({ preventScroll: true });
       });
     }
   }
@@ -294,12 +302,17 @@ class Application {
 
   private restoreRouteFromHistory(): void {
     if (!this.snapshot) return;
+    const previousView = this.view;
     const route = routeFromHash(location.hash) ?? "study";
     const normalized = this.normalizeRoute(route);
+    if (previousView !== normalized && this.isRouteView(previousView)) {
+      this.routeScrollPositions.set(previousView, window.scrollY);
+    }
     this.view = normalized;
     if (normalized !== route) history.replaceState({ view: normalized }, "", hashForRoute(normalized));
     this.render();
     requestAnimationFrame(() => {
+      window.scrollTo({ top: this.routeScrollPositions.get(normalized) ?? 0, left: 0, behavior: "auto" });
       this.shellRefs?.outlet.querySelector<HTMLElement>(".route-title")?.focus({ preventScroll: true });
     });
   }
@@ -308,6 +321,7 @@ class Application {
     await this.store.install(snapshot, expectedWriteToken);
     this.snapshot = this.store.getState().snapshot;
     this.resultRun = null;
+    this.routeScrollPositions.clear();
     this.volatile = this.store.getState().mode === "volatile";
     this.stale = this.store.getState().mode === "stale";
     this.notice = {
@@ -1105,6 +1119,7 @@ class Application {
       if (!snapshot) throw new Error("La recuperación ya no existe.");
       this.snapshot = snapshot;
       this.resultRun = null;
+      this.routeScrollPositions.clear();
       this.volatile = this.store.getState().mode === "volatile";
       this.stale = this.store.getState().mode === "stale";
       this.notice = null;
@@ -1281,7 +1296,11 @@ class Application {
       this.render();
       requestAnimationFrame(() => {
         if (focusRail) this.root.querySelector<HTMLButtonElement>(`.question-rail button:nth-child(${index + 1})`)?.focus();
-        else this.shellRefs?.outlet.querySelector<HTMLElement>(".question-prompt")?.focus({ preventScroll: true });
+        else {
+          const stage = this.shellRefs?.outlet.querySelector<HTMLElement>(".question-stage");
+          stage?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+          stage?.querySelector<HTMLElement>(".question-prompt")?.focus({ preventScroll: true });
+        }
       });
     }
   }
@@ -1371,6 +1390,7 @@ class Application {
         return;
       }
       this.snapshot = restored;
+      this.routeScrollPositions.clear();
       this.volatile = false;
       this.stale = false;
       this.notice = { kind: "success", title: "Copia local recargada", detail: `Estado ${restored.progress.stateRevision}.` };

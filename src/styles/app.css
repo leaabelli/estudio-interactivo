@@ -418,7 +418,7 @@ p { max-width: 68ch; }
 .exam-progress::-webkit-progress-value, .difficulty-bar progress::-webkit-progress-value { border-radius: 999px; background: var(--primary); }
 .exam-progress::-moz-progress-bar, .difficulty-bar progress::-moz-progress-bar { border-radius: 999px; background: var(--primary); }
 
-.question-stage { min-height: clamp(27rem, 56vh, 34rem); overflow-anchor: none; }
+.question-stage { min-height: clamp(27rem, 56vh, 34rem); scroll-margin-top: 6rem; overflow-anchor: none; }
 .question-card {
   margin-top: 1rem;
   padding: clamp(1.25rem, 4vw, 2.25rem);
