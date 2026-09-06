@@ -1419,7 +1419,10 @@ class Application {
       dialog.addEventListener("close", () => {
         const value = dialog.returnValue;
         dialog.remove();
-        if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
+        const focusTarget = previouslyFocused?.isConnected && previouslyFocused !== document.body
+          ? previouslyFocused
+          : this.root.querySelector<HTMLElement>(".file-input, .route-title");
+        focusTarget?.focus({ preventScroll: true });
         resolve(value);
       }, { once: true });
       dialog.addEventListener("cancel", () => { dialog.returnValue = choices[0]?.[0] ?? "cancel"; });
