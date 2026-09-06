@@ -3,11 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 const site = resolve(root, "site");
-const files = [
-  { source: "index.html", target: "index.html" },
-  { source: "output/pdf/manual-usuario.pdf", target: "manual-usuario.pdf" },
-  { source: "modulo-prueba.study.json", target: "modulo-prueba.study.json" },
-];
+const files = [{ source: "index.html", target: "index.html" }];
 
 await rm(site, { recursive: true, force: true });
 await mkdir(site, { recursive: true });

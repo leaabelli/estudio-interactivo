@@ -21,7 +21,7 @@ Estudiá con bancos grandes de preguntas de opción múltiple, continuá en vari
 9. Resolver problemas frecuentes
 10. Usar el proyecto en GitHub Pages
 
-> Consejo: usá `modulo-prueba.study.json` para conocer todo el flujo antes de cargar material propio.
+> Consejo: si tenés el repositorio de desarrollo, usá `modulo-prueba.study.json` para conocer todo el flujo antes de cargar material propio. No viene incorporado en la aplicación publicada.
 
 ## 1. Empezar en dos minutos
 
@@ -33,13 +33,16 @@ Estudiá con bancos grandes de preguntas de opción múltiple, continuá en vari
 
 > Importante: abrir el mismo `index.html` desde otra carpeta puede crear una recuperación local distinta. El archivo exportado es la copia realmente portátil.
 
-### Qué incluye el proyecto
+### Qué se distribuye y qué queda en el proyecto
 
-| Archivo | Para qué sirve |
+| Archivo | Alcance |
 | --- | --- |
-| `index.html` | Aplicación completa y autocontenida. No requiere servidor ni instalación. |
-| `modulo-prueba.study.json` | Banco sintético de 48 preguntas, 12 por dificultad, con progreso inicial vacío. |
-| `manual-usuario.pdf` | Esta guía, incluida en el sitio generado para GitHub Pages. |
+| `index.html` | Único archivo de la aplicación que se comparte o publica. Es completo, autocontenido y no requiere servidor ni instalación. |
+| `modulo-prueba.study.json` | Recurso de prueba del proyecto de desarrollo: 48 preguntas, 12 por dificultad, con progreso inicial vacío. Se carga como archivo externo y no se publica con la aplicación. |
+| `manual-usuario.pdf` | Copia local de esta guía. Es un artefacto documental del proyecto y no forma parte del deploy. |
+| `src/`, `scripts/` y `tests/` | Fuentes y herramientas de desarrollo que producen o verifican `index.html`; no son dependencias de ejecución. |
+
+La aplicación no trae un banco incorporado ni intenta descargarlo. Cada módulo se selecciona explícitamente desde el dispositivo mediante **Cargar módulo**. Después, **Guardar archivo** exporta otro `*.study.json` externo con el progreso actualizado.
 
 ## 2. Entender el archivo portátil
 
@@ -125,7 +128,7 @@ Hay dos mecanismos complementarios:
 3. Si el navegador confirma la escritura, la aplicación informa **Archivo guardado**. Si solo puede iniciar una descarga, comprobá manualmente que aparezca en Descargas.
 4. La próxima vez, cargá ese archivo. La vista previa muestra la revisión de estado antes de instalarlo.
 
-Para pasar a otro dispositivo, copiá el `.study.json` exportado junto con `index.html`, o abrí el sitio publicado y cargá el archivo. No necesitás copiar datos internos del navegador.
+Para pasar el progreso a otro dispositivo, copiá el `.study.json` exportado y cargalo en cualquier copia de `index.html` o en el sitio publicado. El módulo sigue siendo un dato portátil separado: no hace falta modificar, recompilar ni acompañar la aplicación distribuida con un banco predeterminado. Tampoco necesitás copiar datos internos del navegador.
 
 > Regla simple: la recuperación local da comodidad; el último archivo exportado da portabilidad.
 
@@ -196,7 +199,7 @@ Buscá el último `.study.json` exportado. La recuperación local depende del na
 
 ## 10. Usar el proyecto en GitHub Pages
 
-`index.html` vive en la raíz del repositorio, por lo que funciona como página de entrada. El flujo de build crea un directorio `site` con exactamente la aplicación, el módulo sintético y este manual.
+`index.html` vive en la raíz del repositorio, por lo que funciona como página de entrada. El flujo de publicación crea un directorio `site` con exactamente ese archivo y ningún otro. El HTML ya contiene toda la interfaz, los estilos y la lógica necesarios.
 
 ```text
 bun run build
@@ -204,9 +207,9 @@ bun run build:manual
 bun run build:site
 ```
 
-El workflow incluido publica ese directorio mediante GitHub Pages. La aplicación terminada no necesita Bun, Node, CDNs, APIs, analítica ni conexión de red.
+El workflow incluido prueba también el módulo sintético y genera y verifica este PDF como controles del proyecto, pero publica únicamente `site/index.html` mediante GitHub Pages. El módulo de prueba y el manual quedan fuera del deploy. La aplicación terminada no necesita Bun, Node, CDNs, APIs, analítica ni conexión de red.
 
-> Privacidad al publicar: GitHub Pages es público salvo controles externos. Publicá solo la aplicación vacía y material que puedas compartir. Conservá bancos o progreso sensibles fuera del repositorio y cargalos localmente cuando estudies.
+> Privacidad al publicar: GitHub Pages es público salvo controles externos. El build incluido publica solo la aplicación vacía. Conservá bancos o progreso sensibles fuera del sitio y cargalos localmente cuando estudies.
 
 ## Lista de control final
 

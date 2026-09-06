@@ -24,7 +24,7 @@ def main() -> None:
     if metadata is None or metadata.title != "Estudio Interactivo - Manual de uso":
         failures.append("título de metadatos ausente o incorrecto")
 
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = " ".join("\n".join(page.extract_text() or "" for page in reader.pages).split())
     for expected in [
         "Empezar en dos minutos",
         "Preparar un examen modelo",
@@ -32,6 +32,8 @@ def main() -> None:
         "Crear nuevos módulos de preguntas",
         "Resolver problemas frecuentes",
         "GitHub Pages",
+        "site/index.html",
+        "El módulo de prueba y el manual quedan fuera del deploy",
     ]:
         if expected not in text:
             failures.append(f"falta la sección: {expected}")

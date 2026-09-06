@@ -4,19 +4,32 @@ Aplicación de estudio offline y autocontenida. Importa módulos `*.study.json`,
 crea exámenes modelo de 10 preguntas, evita repeticiones innecesarias y conserva
 cobertura, precisión, dominio e historial entre sesiones.
 
-## Entregables
+## Distribución
 
-- `index.html`: aplicación completa, sin dependencias de internet.
-- `modulo-prueba.study.json`: banco sintético inicial de 48 preguntas.
-- `output/pdf/manual-usuario.pdf`: manual de uso en español. El build de Pages
-  lo publica como `manual-usuario.pdf` junto a la aplicación.
+El único archivo que se comparte o publica como aplicación es `index.html`.
+Contiene toda la interfaz, los estilos y la lógica; no descarga código, fuentes,
+módulos ni otros recursos durante el uso.
+
+Los demás archivos pertenecen al proyecto de desarrollo o a su documentación:
+
+- `modulo-prueba.study.json`: banco sintético de 48 preguntas para pruebas y
+  demostraciones locales. Se carga desde la aplicación como cualquier otro
+  módulo externo; no forma parte del HTML ni del deploy.
+- `output/pdf/manual-usuario.pdf`: manual de uso en español para consulta local.
+  Se genera y verifica como artefacto documental, pero no se publica en GitHub
+  Pages.
+- `src/`, `scripts/` y `tests/`: fuentes, compilación y controles de calidad que
+  producen o verifican el HTML; no son dependencias de ejecución.
 
 ## Uso
 
-Abrí `index.html`, cargá `modulo-prueba.study.json` y prepará un examen. La
-aplicación no hace solicitudes de red y guarda cada acción aceptada en una cola
-local. Para mover el avance, usá **Módulo > Guardar archivo** y conservá el
-`.study.json` más reciente.
+Abrí `index.html`, elegí un módulo `*.study.json` desde tu dispositivo y prepará
+un examen. Para probar el proyecto podés seleccionar
+`modulo-prueba.study.json`. La aplicación no hace solicitudes de red y guarda
+cada acción aceptada en una cola local. Para mover el avance, usá
+**Módulo > Guardar archivo** y conservá el `.study.json` más reciente. Ese
+archivo es dato portátil del usuario, no una dependencia ni una parte de la
+aplicación distribuida.
 
 ## Desarrollo
 
@@ -29,8 +42,9 @@ bun run test:all
 ```
 
 `test:all` ejecuta tests unitarios, contractuales y de integración; reconstruye
-y verifica el HTML sin red; valida el módulo inicial; genera y revisa el PDF; y
-crea `site/` con los tres artefactos publicables.
+y verifica el HTML sin red; valida el módulo inicial; genera y revisa el PDF
+local; y crea `site/` con exactamente el único artefacto publicable:
+`index.html`.
 
 ## Crear módulos
 
@@ -45,8 +59,9 @@ bun run validate:initial -- ruta/al/modulo.study.json
 
 ## GitHub Pages
 
-El workflow `.github/workflows/pages.yml` prueba el proyecto y publica solo
-`site/`: `index.html`, `modulo-prueba.study.json` y `manual-usuario.pdf`.
+El workflow `.github/workflows/pages.yml` prueba el proyecto completo y publica
+`site/`, que contiene solamente `index.html`. El módulo de prueba, el manual y
+los archivos fuente no se incluyen en el deploy.
 
 La recuperación del navegador es una comodidad local, no una copia portátil
 garantizada.
