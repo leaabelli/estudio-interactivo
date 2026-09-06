@@ -222,7 +222,9 @@ class Application {
       this.repository = await StudyRepository.open();
       this.store = await createStudyStore(this.repository);
       this.store.subscribe((state) => {
+        const hadActiveRun = Boolean(this.snapshot?.progress.activeRun);
         this.snapshot = state.snapshot;
+        const activeRunChanged = hadActiveRun !== Boolean(state.snapshot?.progress.activeRun);
         this.volatile = state.mode === "volatile";
         this.stale = state.mode === "stale";
         if (state.warning) {
@@ -234,7 +236,11 @@ class Application {
           };
         }
         if (this.root.childNodes.length) {
-          const refreshRoute = this.view === "progress" || this.view === "module" || this.view === "results" || this.view === "recoveries";
+          const refreshRoute = this.view === "progress"
+            || this.view === "module"
+            || this.view === "results"
+            || this.view === "recoveries"
+            || (this.view === "study" && activeRunChanged);
           this.render(refreshRoute);
         }
       });
@@ -691,6 +697,10 @@ class Application {
     const outlet = this.shellRefs?.outlet;
     const snapshot = this.snapshot;
     if (!outlet || !snapshot || snapshot.progress.activeRun) return;
+    const difficultySelect = outlet.querySelector<HTMLSelectElement>("#difficulty");
+    if (difficultySelect) difficultySelect.value = this.difficulty;
+    const populationSelect = outlet.querySelector<HTMLSelectElement>("#population");
+    if (populationSelect) populationSelect.value = this.population;
     const eligible = countEligible(snapshot, this.difficulty, this.population);
     const copy = outlet.querySelector<HTMLElement>("[data-role=eligible]");
     if (copy) copy.textContent = `${eligible} disponibles con estos filtros`;
