@@ -1,2 +1,5 @@
-reportlab>=4.4,<5
-pypdf>=6,<7
+# Exact toolchain for byte-for-byte reproducible PDF builds and verification.
+charset-normalizer==3.5.1
+pillow==12.3.0
+pypdf==6.10.0
+reportlab==4.4.9
