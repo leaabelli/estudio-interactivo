@@ -55,6 +55,7 @@ class ManualDocTemplate(BaseDocTemplate):
             title="Estudio Interactivo - Manual de uso",
             author="Proyecto Estudio Interactivo",
             subject="Guia de uso offline, progreso y modulos portables",
+            invariant=True,
         )
         frame = Frame(
             self.leftMargin,
