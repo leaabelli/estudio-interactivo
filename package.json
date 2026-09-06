@@ -8,13 +8,15 @@
     "build": "bun run scripts/build.ts",
     "build:site": "bun run scripts/build-site.ts",
     "build:manual": "python3 scripts/build-manual.py",
+    "generate:test-module": "bun run scripts/generate-test-module.ts",
     "validate:module": "bun run scripts/validate-module.ts",
+    "validate:initial": "bun run scripts/verify-initial-module.ts",
     "verify:artifact": "bun run scripts/verify-artifact.ts",
+    "verify:manual": "python3 scripts/verify-manual.py",
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "test:contract": "bun test tests/contract",
     "test:integration": "bun test tests/integration",
-    "test:all": "bun test && bun run build && bun run verify:artifact && bun run validate:module modulo-prueba.study.json"
+    "test:all": "bun test && bun run build && bun run verify:artifact && bun run validate:module modulo-prueba.study.json && bun run validate:initial modulo-prueba.study.json && bun run build:manual && bun run verify:manual && bun run build:site"
   }
 }
-

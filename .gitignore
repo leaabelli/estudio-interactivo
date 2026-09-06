@@ -4,5 +4,10 @@ dist/
 site/
 playwright-report/
 test-results/
+tmp/
+__pycache__/
+*.pyc
+.gstack/
 .DS_Store
 
+.gstack/

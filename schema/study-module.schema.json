@@ -1,0 +1,369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://estudio-interactivo.local/schema/study-module.schema.json",
+  "title": "Estudio Interactivo portable study snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "module", "questions", "progress"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "module": { "$ref": "#/$defs/module" },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5000,
+      "items": { "$ref": "#/$defs/question" }
+    },
+    "progress": { "$ref": "#/$defs/progress" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740990
+    },
+    "positiveRevision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740990
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "contentRevision",
+        "title",
+        "subject",
+        "description",
+        "language",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "contentRevision": { "$ref": "#/$defs/positiveRevision" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35,
+          "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+        },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "reference": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "difficulty",
+        "topic",
+        "prompt",
+        "options",
+        "correctOptionId",
+        "explanation"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "revision": { "$ref": "#/$defs/positiveRevision" },
+        "difficulty": {
+          "enum": ["facil", "medio", "dificil", "experto"]
+        },
+        "topic": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 5000 },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/option" }
+        },
+        "correctOptionId": { "$ref": "#/$defs/id" },
+        "explanation": { "type": "string", "minLength": 1, "maxLength": 5000 },
+        "source": { "$ref": "#/$defs/source" }
+      }
+    },
+    "optionAnswer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "optionId"],
+      "properties": {
+        "kind": { "const": "option" },
+        "optionId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "dontKnowAnswer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "dontKnow" }
+      }
+    },
+    "answer": {
+      "oneOf": [
+        { "$ref": "#/$defs/optionAnswer" },
+        { "$ref": "#/$defs/dontKnowAnswer" }
+      ]
+    },
+    "nullableAnswer": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/answer" }
+      ]
+    },
+    "questionProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionRevision",
+        "attempts",
+        "correct",
+        "lastResult",
+        "lastAnswer",
+        "lastSubmittedAt",
+        "lastCompletedStateRevision"
+      ],
+      "properties": {
+        "questionRevision": { "$ref": "#/$defs/positiveRevision" },
+        "attempts": { "$ref": "#/$defs/counter" },
+        "correct": { "$ref": "#/$defs/counter" },
+        "lastResult": {
+          "oneOf": [
+            { "enum": ["correct", "incorrect"] },
+            { "type": "null" }
+          ]
+        },
+        "lastAnswer": { "$ref": "#/$defs/nullableAnswer" },
+        "lastSubmittedAt": {
+          "oneOf": [
+            { "$ref": "#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "lastCompletedStateRevision": {
+          "oneOf": [
+            { "$ref": "#/$defs/positiveRevision" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "runFilters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["difficulty", "population", "requestedSize", "acceptedSize"],
+      "properties": {
+        "difficulty": {
+          "enum": ["facil", "medio", "dificil", "experto", "mixta"]
+        },
+        "population": { "enum": ["nuevas", "todas"] },
+        "requestedSize": { "const": 10 },
+        "acceptedSize": { "type": "integer", "minimum": 1, "maximum": 10 }
+      }
+    },
+    "runItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questionId", "questionRevision", "optionOrder", "answer"],
+      "properties": {
+        "questionId": { "$ref": "#/$defs/id" },
+        "questionRevision": { "$ref": "#/$defs/positiveRevision" },
+        "optionOrder": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "answer": { "$ref": "#/$defs/nullableAnswer" }
+      }
+    },
+    "activeRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "createdStateRevision",
+        "completedStateRevision",
+        "startedAt",
+        "seed",
+        "filters",
+        "coverageBeforeCount",
+        "items",
+        "status",
+        "submittedAt",
+        "currentIndex"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "createdStateRevision": { "$ref": "#/$defs/positiveRevision" },
+        "completedStateRevision": { "type": "null" },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "filters": { "$ref": "#/$defs/runFilters" },
+        "coverageBeforeCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/runItem" }
+        },
+        "status": { "const": "active" },
+        "submittedAt": { "type": "null" },
+        "currentIndex": { "type": "integer", "minimum": 0, "maximum": 9 }
+      }
+    },
+    "completedRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "createdStateRevision",
+        "completedStateRevision",
+        "startedAt",
+        "seed",
+        "filters",
+        "coverageBeforeCount",
+        "items",
+        "status",
+        "submittedAt",
+        "correctCount",
+        "incorrectCount",
+        "coverageAfterCount"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "createdStateRevision": { "$ref": "#/$defs/positiveRevision" },
+        "completedStateRevision": { "$ref": "#/$defs/positiveRevision" },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "filters": { "$ref": "#/$defs/runFilters" },
+        "coverageBeforeCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/runItem" }
+        },
+        "status": { "const": "completed" },
+        "submittedAt": { "$ref": "#/$defs/timestamp" },
+        "correctCount": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "incorrectCount": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "coverageAfterCount": { "type": "integer", "minimum": 0, "maximum": 5000 }
+      }
+    },
+    "difficultySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempts", "correct"],
+      "properties": {
+        "attempts": { "$ref": "#/$defs/counter" },
+        "correct": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "priorRunSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runCount",
+        "attemptCount",
+        "correctCount",
+        "firstSubmittedAt",
+        "lastSubmittedAt",
+        "byDifficulty"
+      ],
+      "properties": {
+        "runCount": { "$ref": "#/$defs/counter" },
+        "attemptCount": { "$ref": "#/$defs/counter" },
+        "correctCount": { "$ref": "#/$defs/counter" },
+        "firstSubmittedAt": {
+          "oneOf": [
+            { "$ref": "#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "lastSubmittedAt": {
+          "oneOf": [
+            { "$ref": "#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "byDifficulty": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["facil", "medio", "dificil", "experto"],
+          "properties": {
+            "facil": { "$ref": "#/$defs/difficultySummary" },
+            "medio": { "$ref": "#/$defs/difficultySummary" },
+            "dificil": { "$ref": "#/$defs/difficultySummary" },
+            "experto": { "$ref": "#/$defs/difficultySummary" }
+          }
+        }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "updatedAt",
+        "stateRevision",
+        "questions",
+        "runs",
+        "priorRunSummary",
+        "activeRun"
+      ],
+      "properties": {
+        "updatedAt": { "$ref": "#/$defs/timestamp" },
+        "stateRevision": { "$ref": "#/$defs/counter" },
+        "questions": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/id" },
+          "additionalProperties": { "$ref": "#/$defs/questionProgress" }
+        },
+        "runs": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/completedRun" }
+        },
+        "priorRunSummary": { "$ref": "#/$defs/priorRunSummary" },
+        "activeRun": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/activeRun" }
+          ]
+        }
+      }
+    }
+  }
+}
