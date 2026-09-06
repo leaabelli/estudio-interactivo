@@ -78,6 +78,15 @@ misma fuente, total y semilla deben producir la misma distribución.
 
 ## Criterios de preguntas
 
+- Usá `prompt` como título o consigna breve y obligatoria. Cuando haga falta
+  desarrollar contexto, datos o condiciones, escribí el enunciado en `body`,
+  que es opcional pero debe tener entre 1 y 5000 caracteres visibles. No
+  dupliques el mismo texto en ambos campos.
+- Durante el examen, la aplicación muestra `prompt`, después `body` y luego el
+  contenido de apoyo. La fuente se reserva para la revisión posterior, para no
+  revelar pistas antes de responder. Los módulos antiguos sin `body` siguen
+  siendo válidos; no les inventes un cuerpo durante la carga ni alteres sus
+  snapshots.
 - Una sola mejor respuesta, demostrable desde la fuente.
 - Cuatro opciones por defecto, todas de la misma categoría y gramática. Usá de
   dos a ocho solo cuando el material lo justifique.
@@ -169,8 +178,8 @@ un color. La leyenda no sustituye `source`: la trazabilidad sigue perteneciendo 
 
 La definición completa del módulo conserva un máximo de 6 MiB canónicos y el
 archivo completo uno de 10 MiB. Optimizá recursos aunque cada bloque cumpla su
-límite individual. Agregar, quitar o modificar apoyo visual en un módulo ya
-existente cambia el contenido: incrementá `question.revision` y
+límite individual. Agregar, quitar o modificar `prompt`, `body` o apoyo visual
+en un módulo ya existente cambia el contenido: incrementá `question.revision` y
 `module.contentRevision`. En el primer guardado ambas revisiones siguen siendo 1.
 
 ## Calibración de dificultad

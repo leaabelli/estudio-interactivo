@@ -21,7 +21,8 @@ export function initialSnapshot(): StudySnapshot {
         revision: 1,
         difficulty: "facil",
         topic: "Conceptos",
-        prompt: "¿Cuál es la opción correcta?",
+        prompt: "Identificación de la respuesta",
+        body: "¿Cuál es la opción correcta?",
         options: [
           { id: "a", text: "La opción A" },
           { id: "b", text: "La opción B" }
@@ -189,4 +190,3 @@ export function compactedSnapshot(): StudySnapshot {
 export function clone<T>(value: T): T {
   return structuredClone(value);
 }
-

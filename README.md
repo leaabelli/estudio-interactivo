@@ -59,7 +59,8 @@ local; y crea `site/` con exactamente el único artefacto publicable:
 
 La skill [generador-modulos-preguntas](.agents/skills/generador-modulos-preguntas/SKILL.md)
 documenta cantidades explícitas o distribución aleatoria balanceada, calibración
-de dificultad, trazabilidad, contenido visual seguro y progreso inicial. Todo
+de dificultad, títulos con enunciados opcionales, trazabilidad, contenido visual
+seguro y progreso inicial. Todo
 módulo nuevo debe pasar:
 
 ```bash

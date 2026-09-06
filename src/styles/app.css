@@ -432,7 +432,35 @@ p { max-width: 68ch; }
   box-shadow: var(--shadow-1);
 }
 .question-topline { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; align-items: center; }
-.question-prompt { max-width: 42ch; margin: 1.5rem 0; font-size: clamp(1.35rem, 3vw, 1.75rem); line-height: 1.38; }
+.question-prompt { max-width: 42ch; margin: 1.5rem 0 0.7rem; font-size: clamp(1.35rem, 3vw, 1.75rem); line-height: 1.38; }
+.question-body {
+  max-width: 68ch;
+  margin: 0 0 1.35rem;
+  color: var(--muted);
+  font-size: 1.02rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.question-source {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: start;
+  max-width: 46rem;
+  margin: 0 0 1.35rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #ccdaec;
+  border-radius: 0.9rem;
+  background: #f7faff;
+}
+.source-icon-wrap { display: grid; width: 2.25rem; height: 2.25rem; place-items: center; border-radius: 0.65rem; background: var(--primary-soft); color: var(--primary); }
+.source-icon { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.source-copy { display: grid; min-width: 0; gap: 0.12rem; }
+.source-kicker { color: var(--primary); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.source-label, .source-reference { overflow-wrap: anywhere; }
+.source-label { color: var(--ink); font-size: 0.9rem; line-height: 1.35; }
+.source-reference { color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
 .question-content { display: grid; min-width: 0; gap: 1rem; margin: 0 0 1.35rem; }
 .question-content-block { min-width: 0; margin: 0; border: 1px solid #dce3ec; border-radius: 0.9rem; background: var(--surface); }
 .question-table-scroll {
@@ -547,12 +575,15 @@ p { max-width: 68ch; }
 .result-item[data-result="correct"] { border-left: 5px solid var(--success); }
 .result-item[data-result="incorrect"] { border-left: 5px solid var(--danger); }
 .result-item-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.7rem; }
+.result-question-copy h3 { margin-bottom: 0.35rem; }
+.result-question-body { max-width: 68ch; margin: 0; color: var(--muted); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-line; }
 .result-marker { display: grid; width: 1.6rem; height: 1.6rem; place-items: center; border-radius: 50%; color: #fff; font-weight: 800; }
 .result-item[data-result="correct"] .result-marker { background: var(--success); }
 .result-item[data-result="incorrect"] .result-marker { background: var(--danger); }
 .result-answer { margin: 0.35rem 0; }
 .result-verdict { display: inline-block; margin-top: 0.4rem; }
 .explanation { max-width: 68ch; padding: 0.9rem 1rem; border-radius: 0.8rem; background: var(--surface-soft); }
+.question-source--review { margin: 1rem 0 0; }
 
 .surface-panel { max-width: 52rem; }
 .primary-panel { border-color: #c6d7ed; background: var(--primary-soft); }
@@ -685,7 +716,8 @@ dialog p { white-space: pre-line; }
   :root { --canvas: Canvas; --surface: Canvas; --surface-soft: Canvas; --surface-strong: Canvas; --ink: CanvasText; --muted: CanvasText; --outline: GrayText; --primary: Highlight; --primary-hover: Highlight; --primary-pressed: Highlight; --primary-soft: Canvas; --success: CanvasText; --success-soft: Canvas; --warning: CanvasText; --warning-soft: Canvas; --danger: CanvasText; --danger-soft: Canvas; --focus: Highlight; }
   .primary, .file-button { border-color: ButtonText; background: ButtonFace; color: ButtonText; }
   .nav-link[aria-current="page"], .answer:has(input:checked) { border: 2px solid Highlight; background: Canvas; color: CanvasText; }
-  .status-dot, .result-marker, .notice-icon { border: 1px solid currentColor; background: Canvas; color: CanvasText; }
+  .status-dot, .result-marker, .notice-icon, .source-icon-wrap { border: 1px solid currentColor; background: Canvas; color: CanvasText; }
+  .question-source { border-color: CanvasText; background: Canvas; }
   .notice.warning .notice-icon, .notice.error .notice-icon, .notice.success .notice-icon { border-color: CanvasText; background: Canvas; color: CanvasText; }
   .ring-value, .coverage-line, .coverage-point { stroke: Highlight; }
   .difficulty::before { border-color: currentColor; }

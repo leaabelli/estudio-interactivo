@@ -37,6 +37,7 @@ import {
   buildRunTrend,
   clampPercent,
   completedRunBelongsToSnapshot,
+  createRelativeNavigationAction,
   hashForRoute,
   navigationBounds,
   routeFromHash,
@@ -196,6 +197,15 @@ function appIcon(kind: "study" | "progress" | "module"): SVGSVGElement {
     className: "nav-icon",
     attrs: { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
   }, svgNode("path", { attrs: { d: paths[kind] } }));
+}
+
+function sourceDocumentIcon(): SVGSVGElement {
+  return svgNode("svg", {
+    className: "source-icon",
+    attrs: { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
+  },
+  svgNode("path", { attrs: { d: "M6.5 2.75h7.25L19.5 8.5v12.75h-13zM13.75 2.75V8.5h5.75M9.5 13h7M9.5 16.5h5" } }),
+  );
 }
 
 function button(label: string, className: string, action: () => void | Promise<void>): HTMLButtonElement {
@@ -821,9 +831,23 @@ class Application {
       node("progress", { className: "exam-progress", data: { role: "exam-progress" }, attrs: { max: String(run.items.length), value: String(answered), "aria-label": "Preguntas respondidas" } }),
     );
     const stage = node("section", { className: "question-stage", data: { questionId: run.items[run.currentIndex]!.questionId } }, this.renderQuestionStage());
-    const previousButton = button("Anterior", "secondary", () => this.navigate(run.currentIndex - 1));
+    const readPosition = () => {
+      const activeRun = this.snapshot?.progress.activeRun;
+      return activeRun
+        ? { currentIndex: activeRun.currentIndex, itemCount: activeRun.items.length }
+        : null;
+    };
+    const previousButton = button("Anterior", "secondary", createRelativeNavigationAction(
+      readPosition,
+      (index) => this.navigate(index),
+      -1,
+    ));
     previousButton.dataset.action = "previous-question";
-    const nextButton = button("Siguiente", "secondary", () => this.navigate(run.currentIndex + 1));
+    const nextButton = button("Siguiente", "secondary", createRelativeNavigationAction(
+      readPosition,
+      (index) => this.navigate(index),
+      1,
+    ));
     nextButton.dataset.action = "next-question";
     const submitButton = button(this.busy ? "Guardando…" : "Entregar examen", "primary", () => this.submitRun());
     submitButton.dataset.action = "submit-exam";
@@ -853,6 +877,9 @@ class Application {
       ),
       node("h1", { className: "question-prompt route-title", text: question.prompt, attrs: { tabindex: "-1" } }),
     );
+    if (question.body) {
+      shell.append(node("p", { className: "question-body", text: question.body }));
+    }
     const supportingContent = this.renderQuestionSupportingContent(question);
     const fieldset = node("fieldset", { className: "answers" });
     fieldset.append(node("legend", { className: "visually-hidden", text: `Respuesta para la pregunta ${run.currentIndex + 1}` }));
@@ -877,6 +904,23 @@ class Application {
     if (supportingContent) shell.append(supportingContent);
     shell.append(fieldset);
     return shell;
+  }
+
+  private renderQuestionSource(question: StudyQuestion, review = false): HTMLElement | null {
+    if (!question.source) return null;
+    return node("div", {
+      className: `question-source${review ? " question-source--review" : ""}`,
+      attrs: { role: "note", "aria-label": "Fuente de la pregunta" },
+      data: { role: "question-source" },
+    },
+    node("span", { className: "source-icon-wrap" }, sourceDocumentIcon()),
+    node("div", { className: "source-copy" },
+      node("span", { className: "source-kicker", text: "Fuente" }),
+      node("strong", { className: "source-label", text: question.source.label }),
+      question.source.reference
+        ? node("span", { className: "source-reference", text: question.source.reference })
+        : null,
+    ));
   }
 
   private renderQuestionSupportingContent(question: StudyQuestion, review = false): HTMLElement | null {
@@ -1225,13 +1269,19 @@ class Application {
       const correct = question.options.find((option) => option.id === question.correctOptionId)?.text ?? question.correctOptionId;
       const isCorrect = selectedId === question.correctOptionId;
       list.append(node("li", { className: "result-item", data: { result: isCorrect ? "correct" : "incorrect" } },
-        node("div", { className: "result-item-heading" }, node("span", { className: "result-marker", text: isCorrect ? "✓" : "×", attrs: { "aria-hidden": "true" } }), node("h3", { text: question.prompt })),
+        node("div", { className: "result-item-heading" },
+          node("span", { className: "result-marker", text: isCorrect ? "✓" : "×", attrs: { "aria-hidden": "true" } }),
+          node("div", { className: "result-question-copy" },
+            node("h3", { text: question.prompt }),
+            question.body ? node("p", { className: "result-question-body", text: question.body }) : null,
+          ),
+        ),
         this.renderQuestionSupportingContent(question, true),
         node("p", { className: "result-answer", text: `Tu respuesta: ${selected}` }),
         node("p", { className: "result-answer", text: `Respuesta correcta: ${correct}` }),
         node("strong", { className: "result-verdict", text: isCorrect ? "Correcta" : "Incorrecta" }),
         node("p", { className: "explanation", text: question.explanation }),
-        question.source ? node("p", { text: `Fuente: ${question.source.label}${question.source.reference ? ` · ${question.source.reference}` : ""}` }) : null,
+        this.renderQuestionSource(question, true),
       ));
     }
     wrapper.append(node("section", { className: "review-section" },

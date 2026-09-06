@@ -49,6 +49,25 @@ export function navigationBounds(index: number, length: number): {
   };
 }
 
+export interface QuestionNavigationPosition {
+  currentIndex: number;
+  itemCount: number;
+}
+
+export function createRelativeNavigationAction(
+  readPosition: () => QuestionNavigationPosition | null,
+  navigate: (index: number) => void | Promise<void>,
+  delta: -1 | 1,
+): () => void {
+  return () => {
+    const position = readPosition();
+    if (!position) return;
+    const target = position.currentIndex + delta;
+    if (target < 0 || target >= position.itemCount) return;
+    void navigate(target);
+  };
+}
+
 export function scorePercent(correctCount: number, itemCount: number): number {
   return clampPercent(percentage(correctCount, itemCount));
 }

@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 interface SchemaNode {
   type?: string;
   pattern?: string;
+  minLength?: number;
+  maxLength?: number;
   additionalProperties?: boolean | SchemaNode;
   required?: string[];
   properties?: Record<string, SchemaNode>;
@@ -62,5 +64,18 @@ describe("canonical JSON Schema", () => {
         expect(visible.test(invisible)).toBe(false);
       }
     }
+  });
+
+  test("defines an optional visible body for the question statement", async () => {
+    const schema = (await Bun.file(new URL("../../schema/study-module.schema.json", import.meta.url)).json()) as SchemaNode;
+    const question = schema.$defs?.question;
+    const body = question?.properties?.body;
+    expect(question?.required).not.toContain("body");
+    expect(body?.type).toBe("string");
+    expect(body?.minLength).toBe(1);
+    expect(body?.maxLength).toBe(5000);
+    expect(new RegExp(body?.pattern ?? "", "u").test("Enunciado visible")).toBe(true);
+    expect(new RegExp(body?.pattern ?? "", "u").test("\u200B\uFEFF")).toBe(false);
+    expect(new RegExp(body?.pattern ?? "", "u").test("\u0301")).toBe(false);
   });
 });

@@ -38,6 +38,7 @@ export interface StudyQuestion {
   difficulty: Difficulty;
   topic: string;
   prompt: string;
+  body?: string;
   options: StudyOption[];
   correctOptionId: string;
   explanation: string;

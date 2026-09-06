@@ -17,6 +17,7 @@ const OPTION_IDS = ["a", "b", "c", "d"] as const;
 interface QuestionDraft {
   topic: string;
   prompt: string;
+  body?: string;
   answer: string;
   distractors: [string, string, string];
   explanation: string;
@@ -793,6 +794,7 @@ function buildQuestions(difficulty: Difficulty, entries: QuestionDraft[]): Study
       difficulty,
       topic: draft.topic,
       prompt: draft.prompt,
+      ...(draft.body ? { body: draft.body } : {}),
       options: OPTION_IDS.map((id, optionIndex) => ({ id, text: optionTexts[optionIndex]! })),
       correctOptionId: OPTION_IDS[correctPosition],
       explanation: draft.explanation,

@@ -773,7 +773,7 @@ function validateQuestionStructure(value: unknown, path: string, errors: Errors)
     value,
     path,
     ["id", "revision", "difficulty", "topic", "prompt", "options", "correctOptionId", "explanation"],
-    ["source", "supportingContent"],
+    ["body", "source", "supportingContent"],
     errors
   );
   if (!question) return;
@@ -782,6 +782,9 @@ function validateQuestionStructure(value: unknown, path: string, errors: Errors)
   oneOfStrings(question.difficulty, DIFFICULTIES, `${path}.difficulty`, errors);
   stringInRange(question.topic, `${path}.topic`, 1, 120, errors);
   stringInRange(question.prompt, `${path}.prompt`, 1, 5000, errors);
+  if (hasOwn(question, "body")) {
+    nonBlankStringInRange(question.body, `${path}.body`, 1, 5000, errors);
+  }
   id(question.correctOptionId, `${path}.correctOptionId`, errors);
   stringInRange(question.explanation, `${path}.explanation`, 1, 5000, errors);
 

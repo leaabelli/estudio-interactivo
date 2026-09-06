@@ -3,6 +3,7 @@ import type { CompletedRun, StudySnapshot } from "../../src/domain/types";
 import {
   buildRunTrend,
   completedRunBelongsToSnapshot,
+  createRelativeNavigationAction,
   hashForRoute,
   navigationBounds,
   routeFromHash,
@@ -57,6 +58,32 @@ describe("presentation helpers", () => {
     expect(navigationBounds(0, 10)).toEqual({ previousDisabled: true, nextDisabled: false });
     expect(navigationBounds(5, 10)).toEqual({ previousDisabled: false, nextDisabled: false });
     expect(navigationBounds(9, 10)).toEqual({ previousDisabled: false, nextDisabled: true });
+  });
+
+  test("keeps relative navigation attached to the live question index", () => {
+    let currentIndex = 0;
+    const visited: number[] = [];
+    const readPosition = () => ({ currentIndex, itemCount: 10 });
+    const navigate = (target: number) => {
+      currentIndex = target;
+      visited.push(target);
+    };
+    const next = createRelativeNavigationAction(readPosition, navigate, 1);
+    const previous = createRelativeNavigationAction(readPosition, navigate, -1);
+
+    next();
+    next();
+    next();
+    previous();
+
+    expect(visited).toEqual([1, 2, 3, 2]);
+    expect(currentIndex).toBe(2);
+
+    currentIndex = 0;
+    previous();
+    currentIndex = 9;
+    next();
+    expect(visited).toEqual([1, 2, 3, 2]);
   });
 
   test("builds no trend for a module without completed runs", () => {

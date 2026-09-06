@@ -57,6 +57,13 @@ describe("valid snapshots", () => {
     expect(result).toEqual({ ok: true, value: snapshot });
   });
 
+  test("accepts a visible optional body and legacy questions without one", () => {
+    const snapshot = initialSnapshot();
+    expect(snapshot.questions[0]!.body).toBe("¿Cuál es la opción correcta?");
+    expect(snapshot.questions[1]!.body).toBeUndefined();
+    expect(validateSnapshot(snapshot).ok).toBe(true);
+  });
+
   test("accepts an active run without counting provisional answers", () => {
     expect(validateSnapshot(activeSnapshot()).ok).toBe(true);
   });
@@ -155,6 +162,23 @@ describe("valid snapshots", () => {
         error.path === "$.module" && error.message.includes("por referencia"))).toBe(true);
     }
   });
+});
+
+describe("question body", () => {
+  test("rejects blank, invisible, and oversized bodies", () => {
+    const blank = initialSnapshot();
+    blank.questions[0]!.body = " \n\t ";
+    expectError(blank, "$.questions[0].body", "carácter visible");
+
+    const invisible = initialSnapshot();
+    invisible.questions[0]!.body = "\u200B\uFEFF";
+    expectError(invisible, "$.questions[0].body", "carácter visible");
+
+    const oversized = initialSnapshot();
+    oversized.questions[0]!.body = "a".repeat(5001);
+    expectError(oversized, "$.questions[0].body", "entre 1 y 5000");
+  });
+
 });
 
 describe("closed structural contract", () => {

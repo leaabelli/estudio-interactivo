@@ -153,6 +153,7 @@
         },
         "topic": { "type": "string", "minLength": 1, "maxLength": 120 },
         "prompt": { "type": "string", "minLength": 1, "maxLength": 5000 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 5000, "pattern": "[\\p{L}\\p{N}\\p{P}\\p{S}]" },
         "options": {
           "type": "array",
           "minItems": 2,

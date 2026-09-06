@@ -78,7 +78,7 @@ La pantalla muestra cuántas preguntas cumplen los filtros. El examen normal tie
 
 ## 4. Responder y entregar
 
-Durante el examen, la navegación general desaparece para reducir distracciones. Cada pantalla muestra el número de pregunta, la dificultad y las opciones. Si el enunciado necesita una tabla, imagen o diagrama, aparece entre la pregunta y las respuestas.
+Durante el examen, la navegación general desaparece para reducir distracciones. Cada pantalla muestra el número de pregunta, la dificultad, un título y, cuando existe, un enunciado desarrollado. Si la pregunta necesita una tabla, imagen o diagrama, aparece antes de las respuestas. La fuente se reserva para la revisión posterior, para que no funcione como pista antes de entregar.
 
 En una pantalla angosta, una tabla ancha se desplaza horizontalmente dentro de su propio recuadro: el resto de la aplicación no debería moverse hacia los costados. Las imágenes y diagramas conservan su proporción y se ajustan al ancho disponible.
 
@@ -97,7 +97,7 @@ Al abandonar se descartan las respuestas provisionales de ese examen. No aumenta
 
 ## 5. Leer resultados y progreso
 
-Al entregar, **Resultados** muestra el puntaje, la cobertura ganada y una revisión pregunta por pregunta con tu respuesta, la respuesta correcta, la explicación y la referencia de la fuente cuando existe. El apoyo visual vuelve a mostrarse para que la corrección conserve todo el contexto.
+Al entregar, **Resultados** muestra el puntaje, la cobertura ganada y una revisión pregunta por pregunta con tu respuesta, la respuesta correcta, la explicación y una tarjeta con la fuente cuando existe. El apoyo visual vuelve a mostrarse para que la corrección conserve todo el contexto.
 
 **Progreso** separa cuatro indicadores para no mezclar conceptos distintos:
 
@@ -168,6 +168,8 @@ Usala con un agente capaz de leer el material fuente y escribir archivos del pro
 
 Antes de escribir, el agente debe mostrar la matriz exacta por tema y dificultad. Si la fuente no alcanza, debe informar el faltante en vez de inventar contenido, completar desde memoria o cambiar cantidades en silencio.
 
+Cada pregunta nueva usa `prompt` como título o consigna breve. El campo opcional `body` contiene el enunciado, contexto o condiciones de hasta 5000 caracteres. Los módulos anteriores que solo tienen `prompt` continúan funcionando sin migración; agregar o cambiar cualquiera de esos textos en un módulo existente requiere incrementar sus revisiones de contenido.
+
 Validá cualquier módulo desde la raíz del proyecto:
 
 ```text
@@ -179,7 +181,7 @@ Un primer guardado válido tiene `stateRevision: 0`, mapa de preguntas evaluadas
 
 ### Tablas, imágenes y diagramas
 
-Una pregunta puede traer hasta cuatro bloques de apoyo ordenados. Las tablas se guardan como filas y columnas de texto. Las imágenes y los diagramas se incrustan como PNG, JPEG o WebP siempre estáticos dentro del mismo `.study.json`, junto con sus dimensiones visibles —incluida la orientación EXIF—, una descripción alternativa obligatoria y una leyenda opcional.
+Una pregunta puede traer hasta cuatro bloques de apoyo ordenados. Las tablas se guardan como filas y columnas de texto. Las imágenes y los diagramas se incrustan como PNG, JPEG o WebP siempre estáticos dentro del mismo `.study.json`, junto con sus dimensiones visibles, incluida la orientación EXIF, una descripción alternativa obligatoria y una leyenda opcional.
 
 No se aceptan enlaces web, rutas locales, SVG, APNG, GIF, HTML ni archivos auxiliares. Los WebP con orientación EXIF sin normalizar y los JPEG con orientación ubicada después de los datos de imagen también se rechazan porque los navegadores no los muestran de manera uniforme. Por eso, una vez cargado el módulo, estos recursos funcionan sin internet y viajan con el progreso al guardar. El límite es de 512 KiB por imagen o diagrama, además de los límites generales del módulo. Antes de instalar un módulo, la aplicación comprueba que el navegador pueda decodificar cada raster; si alguno está roto, rechaza el archivo sin reemplazar el progreso existente.
 
