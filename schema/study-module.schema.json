@@ -82,6 +82,56 @@
         "reference": { "type": "string", "minLength": 1, "maxLength": 500 }
       }
     },
+    "questionTable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "caption", "columns", "rows"],
+      "properties": {
+        "kind": { "const": "table" },
+        "caption": { "type": "string", "minLength": 1, "maxLength": 300, "pattern": "[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u034F\\u061C\\u115F\\u1160\\u17B4\\u17B5\\u180B-\\u180F\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\u3164\\uFE00-\\uFE0F\\uFEFF\\uFFA0\uDB40\uDC00-\uDB43\uDFFF]" },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u034F\\u061C\\u115F\\u1160\\u17B4\\u17B5\\u180B-\\u180F\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\u3164\\uFE00-\\uFE0F\\uFEFF\\uFFA0\uDB40\uDC00-\uDB43\uDFFF]" }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": { "type": "string", "maxLength": 500 }
+          }
+        },
+        "rowHeaderColumn": { "type": "integer", "minimum": 0, "maximum": 11 }
+      }
+    },
+    "questionMedia": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "dataUri", "alt", "width", "height"],
+      "properties": {
+        "kind": { "enum": ["image", "diagram"] },
+        "dataUri": {
+          "type": "string",
+          "maxLength": 699075,
+          "pattern": "^data:image\\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$"
+        },
+        "alt": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u034F\\u061C\\u115F\\u1160\\u17B4\\u17B5\\u180B-\\u180F\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\u3164\\uFE00-\\uFE0F\\uFEFF\\uFFA0\uDB40\uDC00-\uDB43\uDFFF]" },
+        "caption": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u034F\\u061C\\u115F\\u1160\\u17B4\\u17B5\\u180B-\\u180F\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u206F\\u3164\\uFE00-\\uFE0F\\uFEFF\\uFFA0\uDB40\uDC00-\uDB43\uDFFF]" },
+        "width": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 8192 }
+      }
+    },
+    "questionContentBlock": {
+      "oneOf": [
+        { "$ref": "#/$defs/questionTable" },
+        { "$ref": "#/$defs/questionMedia" }
+      ]
+    },
     "question": {
       "type": "object",
       "additionalProperties": false,
@@ -111,7 +161,13 @@
         },
         "correctOptionId": { "$ref": "#/$defs/id" },
         "explanation": { "type": "string", "minLength": 1, "maxLength": 5000 },
-        "source": { "$ref": "#/$defs/source" }
+        "source": { "$ref": "#/$defs/source" },
+        "supportingContent": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/questionContentBlock" }
+        }
       }
     },
     "optionAnswer": {

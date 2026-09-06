@@ -13,6 +13,25 @@ export interface QuestionSource {
   reference?: string;
 }
 
+export interface QuestionTableBlock {
+  kind: "table";
+  caption: string;
+  columns: string[];
+  rows: string[][];
+  rowHeaderColumn?: number;
+}
+
+export interface QuestionMediaBlock {
+  kind: "image" | "diagram";
+  dataUri: string;
+  alt: string;
+  caption?: string;
+  width: number;
+  height: number;
+}
+
+export type QuestionContentBlock = QuestionTableBlock | QuestionMediaBlock;
+
 export interface StudyQuestion {
   id: string;
   revision: number;
@@ -23,6 +42,7 @@ export interface StudyQuestion {
   correctOptionId: string;
   explanation: string;
   source?: QuestionSource;
+  supportingContent?: QuestionContentBlock[];
 }
 
 export interface ModuleMetadata {

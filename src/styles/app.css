@@ -290,7 +290,8 @@ p { max-width: 68ch; }
 .notice.warning .notice-icon { background: var(--warning); }
 .notice.error .notice-icon { background: var(--danger); }
 .notice.success .notice-icon { background: var(--success); }
-.notice p { margin: 0.2rem 0 0; color: var(--ink); }
+.notice > div { min-width: 0; }
+.notice p { margin: 0.2rem 0 0; overflow-wrap: anywhere; color: var(--ink); }
 
 .snackbar {
   position: fixed;
@@ -312,7 +313,7 @@ p { max-width: 68ch; }
   visibility: hidden;
 }
 
-.snackbar span { color: #dfe7ef; }
+.snackbar span { min-width: 0; overflow-wrap: anywhere; color: #dfe7ef; }
 .snackbar[data-visible="true"] { opacity: 1; transform: none; visibility: visible; }
 
 .overview-grid {
@@ -432,6 +433,31 @@ p { max-width: 68ch; }
 }
 .question-topline { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; align-items: center; }
 .question-prompt { max-width: 42ch; margin: 1.5rem 0; font-size: clamp(1.35rem, 3vw, 1.75rem); line-height: 1.38; }
+.question-content { display: grid; min-width: 0; gap: 1rem; margin: 0 0 1.35rem; }
+.question-content-block { min-width: 0; margin: 0; border: 1px solid #dce3ec; border-radius: 0.9rem; background: var(--surface); }
+.question-table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+.question-table-scroll:focus-visible { outline-offset: 2px; }
+.question-table { width: max-content; min-width: 100%; border-spacing: 0; font-variant-numeric: tabular-nums; }
+.question-table caption { padding: 0.8rem 0.9rem; border-bottom: 1px solid #dce3ec; background: var(--surface-soft); color: var(--ink); font-weight: 700; text-align: left; }
+.question-table th, .question-table td { min-width: 7rem; padding: 0.7rem 0.8rem; border-bottom: 1px solid #e4e9ef; overflow-wrap: anywhere; text-align: left; vertical-align: top; }
+.question-table tr:last-child > * { border-bottom: 0; }
+.question-table thead th { background: #f8fafc; color: var(--muted); font-size: 0.8rem; letter-spacing: 0.015em; }
+.question-table tbody th { background: var(--surface); font-weight: 700; }
+.question-table tbody th:first-child { position: sticky; left: 0; z-index: 1; }
+.question-media { overflow: hidden; background: #f8fafc; }
+.question-media img { display: block; max-inline-size: 100%; max-block-size: 32rem; block-size: auto; margin-inline: auto; object-fit: contain; }
+.question-media-fallback { padding: 1rem; border: 1px dashed #c7d2e0; background: var(--surface-soft); color: var(--muted); text-align: center; }
+.question-media-fallback strong { display: block; margin-bottom: 0.35rem; color: var(--ink); }
+.question-media-fallback p { max-width: 54ch; margin: 0 auto; }
+.question-media figcaption { display: flex; flex-wrap: wrap; gap: 0.4rem 0.65rem; align-items: baseline; padding: 0.75rem 0.9rem; border-top: 1px solid #dce3ec; background: var(--surface); color: var(--muted); font-size: 0.82rem; }
+.visual-kind { color: var(--primary); font-size: 0.7rem; font-weight: 780; letter-spacing: 0.08em; text-transform: uppercase; }
+.question-content--review { margin: 0.9rem 0; }
+.question-content--review .question-media img { max-block-size: 22rem; }
 .answers { display: grid; gap: 0.7rem; margin: 0; padding: 0; border: 0; }
 .answer {
   display: grid;
@@ -609,6 +635,10 @@ dialog p { white-space: pre-line; }
   .exam-setup { grid-template-columns: 1fr; }
   .exam-setup .start { grid-column: auto; }
   .question-stage { min-height: 30rem; }
+  .question-content { margin-bottom: 1.1rem; }
+  .question-table caption, .question-table th, .question-table td { padding: 0.65rem 0.7rem; }
+  .question-table th, .question-table td { min-width: 6.5rem; }
+  .question-media figcaption { padding-inline: 0.75rem; }
   .question-rail { grid-template-columns: repeat(5, minmax(2.65rem, 1fr)); }
   .exam-actions { flex-direction: column; }
   .exam-actions > .button-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
@@ -667,4 +697,6 @@ dialog p { white-space: pre-line; }
   .main { padding: 1rem; }
   .route-outlet { width: 100%; }
   .surface-panel, .chart-card, .history-section, .review-section { break-inside: avoid; box-shadow: none; }
+  .question-content-block { break-inside: avoid; }
+  .question-table-scroll { overflow: visible; }
 }

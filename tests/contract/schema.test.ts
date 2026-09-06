@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 interface SchemaNode {
   type?: string;
+  pattern?: string;
   additionalProperties?: boolean | SchemaNode;
   required?: string[];
   properties?: Record<string, SchemaNode>;
@@ -25,6 +26,8 @@ describe("canonical JSON Schema", () => {
       "module",
       "option",
       "source",
+      "questionTable",
+      "questionMedia",
       "question",
       "optionAnswer",
       "dontKnowAnswer",
@@ -44,5 +47,20 @@ describe("canonical JSON Schema", () => {
     const questionMap = schema.$defs?.progress?.properties?.questions;
     expect(typeof questionMap?.additionalProperties).toBe("object");
   });
-});
 
+  test("requires visible table and media descriptions", async () => {
+    const schema = (await Bun.file(new URL("../../schema/study-module.schema.json", import.meta.url)).json()) as SchemaNode;
+    const tablePattern = schema.$defs?.questionTable?.properties?.caption?.pattern;
+    const mediaPattern = schema.$defs?.questionMedia?.properties?.alt?.pattern;
+    expect(typeof tablePattern).toBe("string");
+    expect(typeof mediaPattern).toBe("string");
+    for (const pattern of [tablePattern!, mediaPattern!]) {
+      const visible = new RegExp(pattern, "u");
+      expect(visible.test("Texto visible")).toBe(true);
+      expect(visible.test("😀")).toBe(true);
+      for (const invisible of ["\u115F", "\u1160", "\u3164", "\uFFA0", "\u{E0001}"]) {
+        expect(visible.test(invisible)).toBe(false);
+      }
+    }
+  });
+});

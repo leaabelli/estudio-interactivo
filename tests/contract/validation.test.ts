@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { StudySnapshot } from "../../src/domain/types";
 import {
   MAX_COUNTER,
+  MAX_QUESTION_MEDIA_BYTES,
   MAX_SOURCE_FILE_BYTES,
+  createTrustedModuleValidationContext,
   parseSnapshotText,
+  validateTrustedProgressSnapshot,
   validateSnapshot,
   type ValidationError
 } from "../../src/domain/validation";
@@ -14,6 +17,26 @@ import {
   completedSnapshot,
   initialSnapshot
 } from "./fixtures";
+
+const PNG_1X1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const JPEG_2X3 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAADAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDDooor7k8A/9k=";
+const WEBP_2X3 = "data:image/webp;base64,UklGRjoAAABXRUJQVlA4IC4AAADQAQCdASoCAAMAAUAmJaACdLoB+AADsAD+7gpn/sHf0Hf0Hf6pn/yC5YXXEYAA";
+const INVALID_PNG_BITSTREAM = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAUlEQVQAKDh96AAAAABJRU5ErkJggg==";
+const INVALID_JPEG_BITSTREAM = "data:image/jpeg;base64,/9j/wAAICAABAAEA/9oABgAAPwD/2Q==";
+const INVALID_WEBP_BITSTREAM = "data:image/webp;base64,UklGRhIAAABXRUJQVlA4TAUAAAAvAAAAAAA=";
+const APNG_7X5 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAcAAAAFCAYAAACJmvbYAAAACGFjVEwAAAACAAAAAPONk3AAAAAaZmNUTAAAAAAAAAAHAAAABQAAAAAAAAAAAGQD6AAApN4NvQAAABVJREFUeJxj/M/A8J8BB2DCJUFDSQAfWAII2A8Z6AAAABpmY1RMAAAAAQAAAAcAAAAFAAAAAAAAAAAAZAPoAAA/redpAAAAGWZkQVQAAAACeJxjZGD4/58BB2DCJUFDSQAdWgIIljzNzwAAAABJRU5ErkJggg==";
+const JPEG_EXIF_ORIENTATION_6 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4QAiRXhpZgAATU0AKgAAAAgAAQESAAMAAAABAAYAAAAAAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAMDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD50ooor8MP9Uz/2Q==";
+const JPEG_LATE_EXIF_ORIENTATION_6 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAMDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD50ooor8MP9Uz/4QAiRXhpZgAATU0AKgAAAAgAAQESAAMAAAABAAYAAAAAAAD/2Q==";
+const PNG_EXIF_ORIENTATION_6 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAGmVYSWZNTQAqAAAACAABARIAAwAAAAEABgAAAAAAANZnS2kAAAAQSURBVHicY/zPAAVMMAYDABMpAQPw2AeEAAAAAElFTkSuQmCC";
+const WEBP_EXIF_ORIENTATION_6 = "data:image/webp;base64,UklGRnAAAABXRUJQVlA4WAoAAAAIAAAAAgAAAQAAVlA4IDAAAADQAQCdASoDAAIAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAABFWElGGgAAAE1NACoAAAAIAAEBEgADAAAAAQAGAAAAAAAA";
+const WEBP_EXIF_ORIENTATION_1 = "data:image/webp;base64,UklGRnAAAABXRUJQVlA4WAoAAAAIAAAAAgAAAQAAVlA4IDAAAADQAQCdASoDAAIAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAABFWElGGgAAAE1NACoAAAAIAAEBEgADAAAAAQABAAAAAAAA";
+
+function truncateDataUri(dataUri: string, byteLength: number): string {
+  const separator = dataUri.indexOf(",");
+  const prefix = dataUri.slice(0, separator + 1);
+  const decoded = atob(dataUri.slice(separator + 1));
+  return `${prefix}${btoa(decoded.slice(0, byteLength))}`;
+}
 
 function errorsFor(value: unknown): ValidationError[] {
   const result = validateSnapshot(value);
@@ -50,6 +73,87 @@ describe("valid snapshots", () => {
     const snapshot = initialSnapshot();
     snapshot.questions[0]!.id = "constructor";
     expect(validateSnapshot(snapshot).ok).toBe(true);
+  });
+
+  test("accepts ordered tables, images, and diagrams with accessible metadata", () => {
+    const snapshot = initialSnapshot();
+    snapshot.questions[0]!.supportingContent = [
+      {
+        kind: "table",
+        caption: "Comparación por período",
+        columns: ["Período", "Importe"],
+        rows: [["Año 1", "100"], ["Año 2", "125"]],
+        rowHeaderColumn: 0
+      },
+      {
+        kind: "image",
+        dataUri: PNG_1X1,
+        alt: "Punto de referencia azul sobre fondo transparente.",
+        caption: "Referencia visual",
+        width: 1,
+        height: 1
+      },
+      {
+        kind: "diagram",
+        dataUri: PNG_1X1,
+        alt: "Un nodo representa el inicio del proceso.",
+        width: 1,
+        height: 1
+      }
+    ];
+    expect(validateSnapshot(snapshot).ok).toBe(true);
+  });
+
+  test("accepts genuine JPEG and WebP raster payloads", () => {
+    for (const dataUri of [JPEG_2X3, WEBP_2X3]) {
+      const snapshot = initialSnapshot();
+      snapshot.questions[0]!.supportingContent = [{
+        kind: "image",
+        dataUri,
+        alt: "Rectángulo azul de prueba.",
+        width: 2,
+        height: 3
+      }];
+      expect(validateSnapshot(snapshot).ok).toBe(true);
+    }
+
+    const normalizedWebp = initialSnapshot();
+    normalizedWebp.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: WEBP_EXIF_ORIENTATION_1,
+      alt: "Rectángulo WebP horizontal de prueba.",
+      width: 3,
+      height: 2
+    }];
+    expect(validateSnapshot(normalizedWebp).ok).toBe(true);
+  });
+
+  test("uses the displayed dimensions of EXIF-oriented JPEG and PNG images", () => {
+    for (const dataUri of [JPEG_EXIF_ORIENTATION_6, PNG_EXIF_ORIENTATION_6]) {
+      const snapshot = initialSnapshot();
+      snapshot.questions[0]!.supportingContent = [{
+        kind: "image",
+        dataUri,
+        alt: "Rectángulo orientado verticalmente.",
+        width: 2,
+        height: 3
+      }];
+      expect(validateSnapshot(snapshot).ok).toBe(true);
+    }
+  });
+
+  test("revalidates mutable progress against a trusted module definition", () => {
+    const snapshot = activeSnapshot();
+    const context = createTrustedModuleValidationContext(snapshot);
+    expect(validateTrustedProgressSnapshot(snapshot, context).ok).toBe(true);
+
+    const replacedDefinition = { ...snapshot, module: { ...snapshot.module } };
+    const result = validateTrustedProgressSnapshot(replacedDefinition, context);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((error) =>
+        error.path === "$.module" && error.message.includes("por referencia"))).toBe(true);
+    }
   });
 });
 
@@ -96,6 +200,29 @@ describe("closed structural contract", () => {
     const completed = completedSnapshot();
     (completed.progress.runs[0] as unknown as Record<string, unknown>).currentIndex = 0;
     expectError(completed, "$.progress.runs[0].currentIndex", "no está permitida");
+  });
+
+  test("keeps every supporting-content variant closed", () => {
+    const table = initialSnapshot();
+    table.questions[0]!.supportingContent = [{
+      kind: "table",
+      caption: "Tabla",
+      columns: ["A"],
+      rows: [["1"]]
+    }];
+    (table.questions[0]!.supportingContent[0] as unknown as Record<string, unknown>).extra = true;
+    expectError(table, "$.questions[0].supportingContent[0].extra", "no está permitida");
+
+    const media = initialSnapshot();
+    media.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: PNG_1X1,
+      alt: "Imagen mínima",
+      width: 1,
+      height: 1
+    }];
+    (media.questions[0]!.supportingContent[0] as unknown as Record<string, unknown>).extra = true;
+    expectError(media, "$.questions[0].supportingContent[0].extra", "no está permitida");
   });
 
   test("rejects unsupported schema versions and unsafe counters", () => {
@@ -168,6 +295,234 @@ describe("IDs and references", () => {
     const snapshot = activeSnapshot();
     snapshot.progress.activeRun!.id = "run.other";
     expectError(snapshot, "$.progress.activeRun.id", "run.1.0000002a");
+  });
+});
+
+describe("supporting question content", () => {
+  test("rejects empty, excessive, and unknown block lists", () => {
+    const empty = initialSnapshot();
+    empty.questions[0]!.supportingContent = [];
+    expectError(empty, "$.questions[0].supportingContent", "entre 1 y 4");
+
+    const excessive = initialSnapshot();
+    const table = { kind: "table" as const, caption: "Tabla", columns: ["A"], rows: [["1"]] };
+    excessive.questions[0]!.supportingContent = Array.from({ length: 5 }, () => clone(table));
+    expectError(excessive, "$.questions[0].supportingContent", "entre 1 y 4");
+
+    const unknown = initialSnapshot();
+    (unknown.questions[0] as unknown as Record<string, unknown>).supportingContent = [{ kind: "video" }];
+    expectError(unknown, "$.questions[0].supportingContent[0].kind", "table, image o diagram");
+  });
+
+  test("rejects non-rectangular and out-of-range tables", () => {
+    const ragged = initialSnapshot();
+    ragged.questions[0]!.supportingContent = [{
+      kind: "table",
+      caption: "Tabla irregular",
+      columns: ["A", "B"],
+      rows: [["1"]]
+    }];
+    expectError(ragged, "$.questions[0].supportingContent[0].rows[0]", "exactamente 2");
+
+    const rowHeader = initialSnapshot();
+    rowHeader.questions[0]!.supportingContent = [{
+      kind: "table",
+      caption: "Tabla",
+      columns: ["A"],
+      rows: [["1"]],
+      rowHeaderColumn: 1
+    }];
+    expectError(rowHeader, "$.questions[0].supportingContent[0].rowHeaderColumn", "entre 0 y 0");
+  });
+
+  test("rejects external URLs, SVG, malformed base64, and MIME spoofing", () => {
+    const invalidValues = [
+      "https://example.com/image.png",
+      "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+      "data:image/png;base64,%%%",
+      PNG_1X1.replace("image/png", "image/jpeg")
+    ];
+    for (const dataUri of invalidValues) {
+      const snapshot = initialSnapshot();
+      snapshot.questions[0]!.supportingContent = [{
+        kind: "image",
+        dataUri,
+        alt: "Imagen de prueba",
+        width: 1,
+        height: 1
+      }];
+      expectError(snapshot, "$.questions[0].supportingContent[0].dataUri");
+    }
+  });
+
+  test("requires useful alternative text and exact intrinsic dimensions", () => {
+    const alt = initialSnapshot();
+    alt.questions[0]!.supportingContent = [{
+      kind: "diagram",
+      dataUri: PNG_1X1,
+      alt: "",
+      width: 1,
+      height: 1
+    }];
+    expectError(alt, "$.questions[0].supportingContent[0].alt", "entre 1 y 500");
+
+    const whitespaceAlt = initialSnapshot();
+    whitespaceAlt.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: PNG_1X1,
+      alt: "   ",
+      width: 1,
+      height: 1
+    }];
+    expectError(whitespaceAlt, "$.questions[0].supportingContent[0].alt", "carácter visible");
+
+    const invisibleAlt = initialSnapshot();
+    invisibleAlt.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: PNG_1X1,
+      alt: "\u200B",
+      width: 1,
+      height: 1
+    }];
+    expectError(invisibleAlt, "$.questions[0].supportingContent[0].alt", "carácter visible");
+
+    for (const invisible of [
+      "\u0000",
+      "\u115F",
+      "\u1160",
+      "\u3164",
+      "\uFE0F",
+      "\uFFA0",
+      "\u{E0001}"
+    ]) {
+      const formatOnlyAlt = initialSnapshot();
+      formatOnlyAlt.questions[0]!.supportingContent = [{
+        kind: "image",
+        dataUri: PNG_1X1,
+        alt: invisible,
+        width: 1,
+        height: 1
+      }];
+      expectError(formatOnlyAlt, "$.questions[0].supportingContent[0].alt", "carácter visible");
+    }
+
+    const whitespaceTable = initialSnapshot();
+    whitespaceTable.questions[0]!.supportingContent = [{
+      kind: "table",
+      caption: "\t",
+      columns: ["Encabezado", " "],
+      rows: [["Dato", "1"]]
+    }];
+    expectError(whitespaceTable, "$.questions[0].supportingContent[0].caption", "carácter visible");
+    expectError(whitespaceTable, "$.questions[0].supportingContent[0].columns[1]", "carácter visible");
+
+    const dimensions = initialSnapshot();
+    dimensions.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: PNG_1X1,
+      alt: "Imagen mínima",
+      width: 2,
+      height: 1
+    }];
+    expectError(dimensions, "$.questions[0].supportingContent[0].width", "ancho real (1)");
+
+    const orientedDimensions = initialSnapshot();
+    orientedDimensions.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: JPEG_EXIF_ORIENTATION_6,
+      alt: "Rectángulo orientado verticalmente.",
+      width: 3,
+      height: 2
+    }];
+    expectError(
+      orientedDimensions,
+      "$.questions[0].supportingContent[0].width",
+      "ancho real (2)"
+    );
+  });
+
+  test("rejects truncated raster containers even when their headers are intact", () => {
+    const cases = [
+      truncateDataUri(PNG_1X1, 33),
+      truncateDataUri(JPEG_2X3, atob(JPEG_2X3.split(",")[1]!).length - 2),
+      truncateDataUri(WEBP_2X3, atob(WEBP_2X3.split(",")[1]!).length - 2)
+    ];
+
+    for (const dataUri of cases) {
+      const snapshot = initialSnapshot();
+      snapshot.questions[0]!.supportingContent = [{
+        kind: "image",
+        dataUri,
+        alt: "Imagen truncada de prueba",
+        width: 1,
+        height: 1
+      }];
+      expectError(snapshot, "$.questions[0].supportingContent[0].dataUri", "bytes no corresponden");
+    }
+  });
+
+  test("rejects impossible raster payloads inside complete containers", () => {
+    for (const dataUri of [INVALID_PNG_BITSTREAM, INVALID_JPEG_BITSTREAM, INVALID_WEBP_BITSTREAM]) {
+      const snapshot = initialSnapshot();
+      snapshot.questions[0]!.supportingContent = [{
+        kind: "image",
+        dataUri,
+        alt: "Imagen imposible de prueba",
+        width: 1,
+        height: 1
+      }];
+      expectError(snapshot, "$.questions[0].supportingContent[0].dataUri", "bytes no corresponden");
+    }
+  });
+
+  test("rejects animated PNG content", () => {
+    const snapshot = initialSnapshot();
+    snapshot.questions[0]!.supportingContent = [{
+      kind: "diagram",
+      dataUri: APNG_7X5,
+      alt: "Dos cuadros animados de prueba",
+      width: 7,
+      height: 5
+    }];
+    expectError(snapshot, "$.questions[0].supportingContent[0].dataUri", "bytes no corresponden");
+  });
+
+  test("rejects WebP orientation metadata that browsers render inconsistently", () => {
+    const snapshot = initialSnapshot();
+    snapshot.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: WEBP_EXIF_ORIENTATION_6,
+      alt: "Rectángulo WebP con orientación no normalizada.",
+      width: 3,
+      height: 2
+    }];
+    expectError(snapshot, "$.questions[0].supportingContent[0].dataUri", "bytes no corresponden");
+  });
+
+  test("rejects JPEG orientation metadata placed after image scan data", () => {
+    const snapshot = initialSnapshot();
+    snapshot.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: JPEG_LATE_EXIF_ORIENTATION_6,
+      alt: "Rectángulo JPEG con orientación tardía.",
+      width: 2,
+      height: 3
+    }];
+    expectError(snapshot, "$.questions[0].supportingContent[0].dataUri", "bytes no corresponden");
+  });
+
+  test("enforces the decoded media budget before image parsing", () => {
+    const snapshot = initialSnapshot();
+    const decodedBytes = MAX_QUESTION_MEDIA_BYTES + 1;
+    const base64 = "A".repeat((decodedBytes / 3) * 4);
+    snapshot.questions[0]!.supportingContent = [{
+      kind: "image",
+      dataUri: `data:image/png;base64,${base64}`,
+      alt: "Carga sobredimensionada",
+      width: 1,
+      height: 1
+    }];
+    expectError(snapshot, "$.questions[0].supportingContent[0].dataUri", "bytes decodificados");
   });
 });
 
@@ -303,4 +658,3 @@ describe("parsing, encoding, and budgets", () => {
     expectError(snapshot, "$", "unpaired high surrogate");
   });
 });
-

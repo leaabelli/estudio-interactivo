@@ -8,8 +8,8 @@ import {
 } from "../../src/domain/types";
 import { validateSnapshot } from "../../src/domain/validation";
 
-const MODULE_ID = "fundamentos-estudio-razonamiento";
-const FIXED_TIMESTAMP = "2026-09-06T12:00:00Z";
+const MODULE_ID = "fundamentos-estudio-razonamiento-visual";
+const FIXED_TIMESTAMP = "2026-09-06T18:00:00Z";
 const MODULE_URL = new URL("../../modulo-prueba.study.json", import.meta.url);
 
 async function loadModule(): Promise<{ snapshot: StudySnapshot; text: string }> {
@@ -81,6 +81,24 @@ describe("módulo sintético inicial", () => {
       expect(question.source?.reference).toStartWith("Fundamentos de estudio y razonamiento · ");
     }
     expect(text).not.toMatch(/campusvirtual|udesa|https?:\/\//i);
+  });
+
+  test("demuestra tabla, imagen y diagrama sin recursos externos", async () => {
+    const { snapshot } = await loadModule();
+    const blocks = snapshot.questions.flatMap((question) => question.supportingContent ?? []);
+    expect(blocks.map((block) => block.kind)).toEqual(["image", "diagram", "table"]);
+
+    for (const block of blocks) {
+      if (block.kind === "table") {
+        expect(block.caption).toBeTruthy();
+        expect(block.rows.every((row) => row.length === block.columns.length)).toBe(true);
+      } else {
+        expect(block.dataUri).toMatch(/^data:image\/(?:png|jpeg|webp);base64,/);
+        expect(block.alt).toBeTruthy();
+        expect(block.width).toBeGreaterThan(0);
+        expect(block.height).toBeGreaterThan(0);
+      }
+    }
   });
 
   test("inicia con metadatos reproducibles y progreso exactamente vacío", async () => {

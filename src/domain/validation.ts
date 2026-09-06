@@ -16,12 +16,17 @@ export const MAX_SOURCE_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024;
 export const MAX_MODULE_BYTES = 6 * 1024 * 1024;
 export const MAX_PROGRESS_BYTES = Math.floor(3.5 * 1024 * 1024);
+export const MAX_QUESTION_MEDIA_BYTES = 512 * 1024;
+export const MAX_QUESTION_MEDIA_PIXELS = 8_000_000;
 export const MAX_COUNTER = Number.MAX_SAFE_INTEGER - 1;
 
 const MAX_ERRORS = 200;
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/;
 const TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+const MEDIA_DATA_URI_PATTERN = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
+const VISIBLE_TEXT_PATTERN = /[\p{L}\p{N}\p{P}\p{S}]/u;
+const DEFAULT_IGNORABLE_TEXT_PATTERN = /\p{Default_Ignorable_Code_Point}/gu;
 const hasOwn = (value: object, key: PropertyKey): boolean =>
   Object.prototype.hasOwnProperty.call(value, key);
 
@@ -100,6 +105,21 @@ function stringInRange(
   const length = codePointLength(value);
   if (length < min || length > max) {
     errors.add(path, `debe tener entre ${min} y ${max} caracteres Unicode`);
+    return false;
+  }
+  return true;
+}
+
+function nonBlankStringInRange(
+  value: unknown,
+  path: string,
+  min: number,
+  max: number,
+  errors: Errors
+): value is string {
+  if (!stringInRange(value, path, min, max, errors)) return false;
+  if (!VISIBLE_TEXT_PATTERN.test(value.replace(DEFAULT_IGNORABLE_TEXT_PATTERN, ""))) {
+    errors.add(path, "debe incluir al menos un carácter visible");
     return false;
   }
   return true;
@@ -202,6 +222,501 @@ function oneOfStrings(
   return true;
 }
 
+interface ImageDimensions {
+  width: number;
+  height: number;
+}
+
+function bytesMatch(bytes: Uint8Array, offset: number, expected: readonly number[]): boolean {
+  return expected.every((value, index) => bytes[offset + index] === value);
+}
+
+function asciiMatch(bytes: Uint8Array, offset: number, expected: string): boolean {
+  return Array.from(expected).every((value, index) => bytes[offset + index] === value.charCodeAt(0));
+}
+
+function uint16BigEndian(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset] ?? 0) << 8) | (bytes[offset + 1] ?? 0);
+}
+
+function uint16LittleEndian(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] ?? 0) | ((bytes[offset + 1] ?? 0) << 8);
+}
+
+function uint24LittleEndian(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] ?? 0) | ((bytes[offset + 1] ?? 0) << 8) | ((bytes[offset + 2] ?? 0) << 16);
+}
+
+function uint32BigEndian(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] ?? 0) * 0x1000000) +
+    ((bytes[offset + 1] ?? 0) << 16) +
+    ((bytes[offset + 2] ?? 0) << 8) +
+    (bytes[offset + 3] ?? 0)
+  );
+}
+
+function uint32LittleEndian(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset] ?? 0) +
+    ((bytes[offset + 1] ?? 0) << 8) +
+    ((bytes[offset + 2] ?? 0) << 16) +
+    ((bytes[offset + 3] ?? 0) * 0x1000000)
+  );
+}
+
+function tiffOrientation(
+  bytes: Uint8Array,
+  tiffStart: number,
+  dataEnd: number
+): number | null {
+  if (dataEnd - tiffStart < 8) return null;
+  const littleEndian = bytesMatch(bytes, tiffStart, [0x49, 0x49]);
+  const bigEndian = bytesMatch(bytes, tiffStart, [0x4d, 0x4d]);
+  if (!littleEndian && !bigEndian) return null;
+  const read16 = (offset: number): number => littleEndian
+    ? uint16LittleEndian(bytes, offset)
+    : uint16BigEndian(bytes, offset);
+  const read32 = (offset: number): number => littleEndian
+    ? uint32LittleEndian(bytes, offset)
+    : uint32BigEndian(bytes, offset);
+  if (read16(tiffStart + 2) !== 42) return null;
+
+  const ifdOffset = read32(tiffStart + 4);
+  if (ifdOffset < 8 || ifdOffset > dataEnd - tiffStart - 2) return null;
+  const ifdStart = tiffStart + ifdOffset;
+  const entryCount = read16(ifdStart);
+  if (entryCount > Math.floor((dataEnd - ifdStart - 2) / 12)) return null;
+  for (let index = 0; index < entryCount; index += 1) {
+    const entryStart = ifdStart + 2 + (index * 12);
+    if (read16(entryStart) !== 0x0112) continue;
+    if (read16(entryStart + 2) !== 3 || read32(entryStart + 4) !== 1) return null;
+    const orientation = read16(entryStart + 8);
+    return orientation >= 1 && orientation <= 8 ? orientation : null;
+  }
+  return 1;
+}
+
+function jpegExifOrientation(
+  bytes: Uint8Array,
+  dataStart: number,
+  dataEnd: number
+): number | null | undefined {
+  if (
+    dataEnd - dataStart < 6 ||
+    !bytesMatch(bytes, dataStart, [0x45, 0x78, 0x69, 0x66, 0x00, 0x00])
+  ) return undefined;
+  return tiffOrientation(bytes, dataStart + 6, dataEnd);
+}
+
+function crc32Range(bytes: Uint8Array, start: number, end: number): number {
+  let crc = 0xffffffff;
+  for (let offset = start; offset < end; offset += 1) {
+    crc ^= bytes[offset]!;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngDimensions(bytes: Uint8Array): ImageDimensions | null {
+  if (
+    bytes.length < 57 ||
+    !bytesMatch(bytes, 0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  ) return null;
+
+  let offset = 8;
+  let dimensions: ImageDimensions | null = null;
+  let colorType: number | null = null;
+  let sawPalette = false;
+  let sawImageData = false;
+  let imageDataBytes = 0;
+  const imageDataPrefix: number[] = [];
+  let imageDataClosed = false;
+  let chunkIndex = 0;
+  let exifOrientation = 1;
+  let sawExifOrientation = false;
+
+  while (offset + 12 <= bytes.length) {
+    const dataLength = uint32BigEndian(bytes, offset);
+    const dataStart = offset + 8;
+    if (dataLength > bytes.length - dataStart - 4) return null;
+    const dataEnd = dataStart + dataLength;
+    const chunkEnd = dataEnd + 4;
+    const typeOffset = offset + 4;
+    const typeBytes = bytes.subarray(typeOffset, typeOffset + 4);
+    if (!Array.from(typeBytes).every((byte) =>
+      (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a))) return null;
+    if (typeBytes[2]! >= 0x61 && typeBytes[2]! <= 0x7a) return null;
+    if (crc32Range(bytes, typeOffset, dataEnd) !== uint32BigEndian(bytes, dataEnd)) return null;
+
+    const chunkType = String.fromCharCode(...typeBytes);
+    if (chunkIndex === 0 && chunkType !== "IHDR") return null;
+    if (chunkType === "acTL" || chunkType === "fcTL" || chunkType === "fdAT") return null;
+    if (sawImageData && chunkType !== "IDAT" && chunkType !== "IEND") {
+      imageDataClosed = true;
+    }
+
+    if (chunkType === "IHDR") {
+      if (chunkIndex !== 0 || dataLength !== 13 || dimensions) return null;
+      const width = uint32BigEndian(bytes, dataStart);
+      const height = uint32BigEndian(bytes, dataStart + 4);
+      const bitDepth = bytes[dataStart + 8]!;
+      colorType = bytes[dataStart + 9]!;
+      const validDepths: Readonly<Record<number, readonly number[]>> = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16]
+      };
+      if (
+        width < 1 ||
+        height < 1 ||
+        !validDepths[colorType]?.includes(bitDepth) ||
+        bytes[dataStart + 10] !== 0 ||
+        bytes[dataStart + 11] !== 0 ||
+        ![0, 1].includes(bytes[dataStart + 12]!)
+      ) return null;
+      dimensions = { width, height };
+    } else if (chunkType === "PLTE") {
+      if (!dimensions || sawPalette || sawImageData || dataLength < 3 || dataLength > 768 || dataLength % 3 !== 0) {
+        return null;
+      }
+      if (colorType === 0 || colorType === 4) return null;
+      sawPalette = true;
+    } else if (chunkType === "eXIf") {
+      if (!dimensions || sawImageData || sawExifOrientation) return null;
+      const orientation = tiffOrientation(bytes, dataStart, dataEnd);
+      if (orientation === null) return null;
+      exifOrientation = orientation;
+      sawExifOrientation = true;
+    } else if (chunkType === "IDAT") {
+      if (!dimensions || imageDataClosed || (colorType === 3 && !sawPalette)) return null;
+      sawImageData = true;
+      imageDataBytes += dataLength;
+      for (let index = 0; index < dataLength && imageDataPrefix.length < 2; index += 1) {
+        imageDataPrefix.push(bytes[dataStart + index]!);
+      }
+    } else if (chunkType === "IEND") {
+      if (
+        !dimensions ||
+        dataLength !== 0 ||
+        !sawImageData ||
+        imageDataBytes < 8 ||
+        imageDataPrefix.length < 2 ||
+        (imageDataPrefix[0]! & 0x0f) !== 8 ||
+        (imageDataPrefix[0]! >> 4) > 7 ||
+        ((imageDataPrefix[0]! << 8) + imageDataPrefix[1]!) % 31 !== 0 ||
+        (imageDataPrefix[1]! & 0x20) !== 0 ||
+        (colorType === 3 && !sawPalette) ||
+        chunkEnd !== bytes.length
+      ) return null;
+      return exifOrientation >= 5
+        ? { width: dimensions.height, height: dimensions.width }
+        : dimensions;
+    } else if (typeBytes[0]! >= 0x41 && typeBytes[0]! <= 0x5a) {
+      return null;
+    }
+
+    offset = chunkEnd;
+    chunkIndex += 1;
+  }
+  return null;
+}
+
+function jpegDimensions(bytes: Uint8Array): ImageDimensions | null {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  const startOfFrameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  let offset = 2;
+  let dimensions: ImageDimensions | null = null;
+  let inScan = false;
+  let sawScan = false;
+  let scanDataBytes = 0;
+  let exifOrientation = 1;
+  let sawExifOrientation = false;
+
+  while (offset < bytes.length) {
+    let marker: number | undefined;
+    if (inScan) {
+      while (offset < bytes.length) {
+        if (bytes[offset] !== 0xff) {
+          scanDataBytes += 1;
+          offset += 1;
+          continue;
+        }
+        offset += 1;
+        while (bytes[offset] === 0xff) offset += 1;
+        marker = bytes[offset];
+        offset += 1;
+        if (marker === 0x00) {
+          scanDataBytes += 1;
+          marker = undefined;
+          continue;
+        }
+        if (marker !== undefined && marker >= 0xd0 && marker <= 0xd7) {
+          marker = undefined;
+          continue;
+        }
+        inScan = false;
+        break;
+      }
+      if (marker === undefined) return null;
+    } else {
+      if (bytes[offset] !== 0xff) return null;
+      while (bytes[offset] === 0xff) offset += 1;
+      marker = bytes[offset];
+      offset += 1;
+    }
+
+    if (marker === undefined || marker === 0x00 || marker === 0xd8) return null;
+    if (marker === 0xd9) {
+      if (!sawScan || scanDataBytes < 1 || !dimensions || offset !== bytes.length) return null;
+      return exifOrientation >= 5
+        ? { width: dimensions.height, height: dimensions.width }
+        : dimensions;
+    }
+    if (marker === 0x01) continue;
+    if (marker >= 0xd0 && marker <= 0xd7) return null;
+    if (offset + 2 > bytes.length) return null;
+    const segmentLength = uint16BigEndian(bytes, offset);
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) return null;
+    if (marker === 0xe1) {
+      const orientation = jpegExifOrientation(bytes, offset + 2, offset + segmentLength);
+      if (orientation === null) return null;
+      if (orientation !== undefined) {
+        if (sawScan && orientation !== 1) return null;
+        if (sawExifOrientation && exifOrientation !== orientation) return null;
+        exifOrientation = orientation;
+        sawExifOrientation = true;
+      }
+    }
+    if (startOfFrameMarkers.has(marker)) {
+      if (segmentLength < 8) return null;
+      const height = uint16BigEndian(bytes, offset + 3);
+      const width = uint16BigEndian(bytes, offset + 5);
+      const components = bytes[offset + 7]!;
+      if (width < 1 || height < 1 || components < 1 || segmentLength !== 8 + (3 * components)) return null;
+      if (dimensions && (dimensions.width !== width || dimensions.height !== height)) return null;
+      dimensions = { width, height };
+    }
+    if (marker === 0xda) {
+      const components = bytes[offset + 2]!;
+      if (!dimensions || components < 1 || segmentLength !== 6 + (2 * components)) return null;
+      sawScan = true;
+      inScan = true;
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
+function webpDimensions(bytes: Uint8Array): ImageDimensions | null {
+  if (
+    bytes.length < 20 ||
+    !asciiMatch(bytes, 0, "RIFF") ||
+    !asciiMatch(bytes, 8, "WEBP") ||
+    uint32LittleEndian(bytes, 4) + 8 !== bytes.length
+  ) return null;
+
+  let offset = 12;
+  let extendedDimensions: ImageDimensions | null = null;
+  let rasterDimensions: ImageDimensions | null = null;
+  let extendedFlags: number | null = null;
+  let sawExif = false;
+  let chunkIndex = 0;
+
+  while (offset + 8 <= bytes.length) {
+    const chunkType = String.fromCharCode(...bytes.subarray(offset, offset + 4));
+    const dataLength = uint32LittleEndian(bytes, offset + 4);
+    const dataStart = offset + 8;
+    if (dataLength > bytes.length - dataStart) return null;
+    const dataEnd = dataStart + dataLength;
+    const chunkEnd = dataEnd + (dataLength % 2);
+    if (chunkEnd > bytes.length) return null;
+
+    if (chunkType === "VP8X") {
+      if (chunkIndex !== 0 || dataLength !== 10 || extendedDimensions) return null;
+      extendedFlags = bytes[dataStart]!;
+      if ((extendedFlags & 0xc3) !== 0) return null;
+      extendedDimensions = {
+        width: uint24LittleEndian(bytes, dataStart + 4) + 1,
+        height: uint24LittleEndian(bytes, dataStart + 7) + 1
+      };
+    } else if (chunkType === "VP8 ") {
+      if (rasterDimensions || dataLength <= 10 || !bytesMatch(bytes, dataStart + 3, [0x9d, 0x01, 0x2a])) return null;
+      const firstPartitionLength = ((bytes[dataStart]! >> 5) | (bytes[dataStart + 1]! << 3) | (bytes[dataStart + 2]! << 11));
+      if (10 + firstPartitionLength > dataLength) return null;
+      const width = uint16LittleEndian(bytes, dataStart + 6) & 0x3fff;
+      const height = uint16LittleEndian(bytes, dataStart + 8) & 0x3fff;
+      if (width < 1 || height < 1) return null;
+      rasterDimensions = { width, height };
+    } else if (chunkType === "VP8L") {
+      if (rasterDimensions || dataLength <= 5 || bytes[dataStart] !== 0x2f) return null;
+      const width = 1 + bytes[dataStart + 1]! + ((bytes[dataStart + 2]! & 0x3f) << 8);
+      const height = 1 + (bytes[dataStart + 2]! >> 6) + (bytes[dataStart + 3]! << 2) + ((bytes[dataStart + 4]! & 0x0f) << 10);
+      rasterDimensions = { width, height };
+    } else if (chunkType === "EXIF") {
+      if (sawExif || extendedFlags === null || (extendedFlags & 0x08) === 0) return null;
+      const tiffStart = bytesMatch(bytes, dataStart, [0x45, 0x78, 0x69, 0x66, 0x00, 0x00])
+        ? dataStart + 6
+        : dataStart;
+      const orientation = tiffOrientation(bytes, tiffStart, dataEnd);
+      if (orientation === null || orientation !== 1) return null;
+      sawExif = true;
+    } else if (chunkType === "ANIM" || chunkType === "ANMF") {
+      return null;
+    }
+
+    offset = chunkEnd;
+    chunkIndex += 1;
+  }
+
+  if (
+    offset !== bytes.length ||
+    !rasterDimensions ||
+    ((extendedFlags ?? 0) & 0x08) !== (sawExif ? 0x08 : 0)
+  ) return null;
+  if (
+    extendedDimensions &&
+    (extendedDimensions.width !== rasterDimensions.width || extendedDimensions.height !== rasterDimensions.height)
+  ) return null;
+  return rasterDimensions;
+}
+
+function validateMediaDataUri(
+  value: unknown,
+  path: string,
+  errors: Errors
+): ImageDimensions | null {
+  if (typeof value !== "string") {
+    errors.add(path, "debe ser un data URI de imagen autocontenida");
+    return null;
+  }
+  const match = MEDIA_DATA_URI_PATTERN.exec(value);
+  if (!match || match[2]!.length % 4 !== 0) {
+    errors.add(path, "debe usar base64 canónico PNG, JPEG o WebP, sin URL externa");
+    return null;
+  }
+  let decoded: string;
+  try {
+    decoded = atob(match[2]!);
+  } catch {
+    errors.add(path, "contiene base64 inválido");
+    return null;
+  }
+  if (btoa(decoded) !== match[2]) {
+    errors.add(path, "debe usar base64 canónico");
+    return null;
+  }
+  if (decoded.length > MAX_QUESTION_MEDIA_BYTES) {
+    errors.add(path, `la imagen supera ${MAX_QUESTION_MEDIA_BYTES} bytes decodificados`);
+    return null;
+  }
+  const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+  const dimensions = match[1] === "image/png"
+    ? pngDimensions(bytes)
+    : match[1] === "image/jpeg"
+      ? jpegDimensions(bytes)
+      : webpDimensions(bytes);
+  if (!dimensions) {
+    errors.add(path, `los bytes no corresponden a un contenedor ${match[1]} íntegro con dimensiones legibles`);
+    return null;
+  }
+  if (dimensions.width * dimensions.height > MAX_QUESTION_MEDIA_PIXELS) {
+    errors.add(path, `la imagen supera ${MAX_QUESTION_MEDIA_PIXELS} píxeles`);
+    return null;
+  }
+  return dimensions;
+}
+
+function validateQuestionContentStructure(value: unknown, path: string, errors: Errors): void {
+  if (!Array.isArray(value)) {
+    errors.add(path, "debe ser una lista de 1 a 4 bloques");
+    return;
+  }
+  if (value.length < 1 || value.length > 4) {
+    errors.add(path, "debe contener entre 1 y 4 bloques");
+  }
+  value.forEach((entry, index) => {
+    const blockPath = `${path}[${index}]`;
+    if (!isRecord(entry)) {
+      errors.add(blockPath, "debe ser un bloque de tabla, imagen o diagrama");
+      return;
+    }
+    if (entry.kind === "table") {
+      const table = exactObject(entry, blockPath, ["kind", "caption", "columns", "rows"], ["rowHeaderColumn"], errors);
+      if (!table) return;
+      literal(table.kind, "table", `${blockPath}.kind`, errors);
+      nonBlankStringInRange(table.caption, `${blockPath}.caption`, 1, 300, errors);
+      const columns = table.columns;
+      if (!Array.isArray(columns)) {
+        errors.add(`${blockPath}.columns`, "debe ser una lista de 1 a 12 encabezados");
+      } else {
+        if (columns.length < 1 || columns.length > 12) {
+          errors.add(`${blockPath}.columns`, "debe contener entre 1 y 12 encabezados");
+        }
+        columns.forEach((column, columnIndex) =>
+          nonBlankStringInRange(column, `${blockPath}.columns[${columnIndex}]`, 1, 120, errors));
+      }
+      if (!Array.isArray(table.rows)) {
+        errors.add(`${blockPath}.rows`, "debe ser una lista de 1 a 50 filas");
+      } else {
+        if (table.rows.length < 1 || table.rows.length > 50) {
+          errors.add(`${blockPath}.rows`, "debe contener entre 1 y 50 filas");
+        }
+        table.rows.forEach((row, rowIndex) => {
+          const rowPath = `${blockPath}.rows[${rowIndex}]`;
+          if (!Array.isArray(row)) {
+            errors.add(rowPath, "debe ser una lista de celdas");
+            return;
+          }
+          if (Array.isArray(columns) && row.length !== columns.length) {
+            errors.add(rowPath, `debe contener exactamente ${columns.length} celdas`);
+          }
+          if (row.length < 1 || row.length > 12) {
+            errors.add(rowPath, "debe contener entre 1 y 12 celdas");
+          }
+          row.forEach((cell, cellIndex) =>
+            stringInRange(cell, `${rowPath}[${cellIndex}]`, 0, 500, errors));
+        });
+      }
+      if (hasOwn(table, "rowHeaderColumn")) {
+        const maxColumn = Array.isArray(columns) && columns.length > 0 ? columns.length - 1 : 11;
+        integerInRange(table.rowHeaderColumn, `${blockPath}.rowHeaderColumn`, 0, maxColumn, errors);
+      }
+      return;
+    }
+    if (entry.kind === "image" || entry.kind === "diagram") {
+      const media = exactObject(
+        entry,
+        blockPath,
+        ["kind", "dataUri", "alt", "width", "height"],
+        ["caption"],
+        errors
+      );
+      if (!media) return;
+      oneOfStrings(media.kind, ["image", "diagram"], `${blockPath}.kind`, errors);
+      nonBlankStringInRange(media.alt, `${blockPath}.alt`, 1, 500, errors);
+      if (hasOwn(media, "caption")) {
+        nonBlankStringInRange(media.caption, `${blockPath}.caption`, 1, 500, errors);
+      }
+      const widthIsValid = integerInRange(media.width, `${blockPath}.width`, 1, 8192, errors);
+      const heightIsValid = integerInRange(media.height, `${blockPath}.height`, 1, 8192, errors);
+      const dimensions = validateMediaDataUri(media.dataUri, `${blockPath}.dataUri`, errors);
+      if (dimensions && widthIsValid && media.width !== dimensions.width) {
+        errors.add(`${blockPath}.width`, `debe coincidir con el ancho real (${dimensions.width})`);
+      }
+      if (dimensions && heightIsValid && media.height !== dimensions.height) {
+        errors.add(`${blockPath}.height`, `debe coincidir con el alto real (${dimensions.height})`);
+      }
+      return;
+    }
+    errors.add(`${blockPath}.kind`, "debe ser table, image o diagram");
+  });
+}
+
 function validateAnswerStructure(
   value: unknown,
   path: string,
@@ -258,7 +773,7 @@ function validateQuestionStructure(value: unknown, path: string, errors: Errors)
     value,
     path,
     ["id", "revision", "difficulty", "topic", "prompt", "options", "correctOptionId", "explanation"],
-    ["source"],
+    ["source", "supportingContent"],
     errors
   );
   if (!question) return;
@@ -293,6 +808,9 @@ function validateQuestionStructure(value: unknown, path: string, errors: Errors)
         stringInRange(source.reference, `${path}.source.reference`, 1, 500, errors);
       }
     }
+  }
+  if (hasOwn(question, "supportingContent")) {
+    validateQuestionContentStructure(question.supportingContent, `${path}.supportingContent`, errors);
   }
 }
 
@@ -521,7 +1039,7 @@ interface RetainedOccurrence {
 
 function validateQuestionSemantics(
   snapshot: StudySnapshot,
-  questionById: Map<string, StudyQuestion>,
+  questionById: ReadonlyMap<string, StudyQuestion>,
   occurrences: Map<string, RetainedOccurrence[]>,
   errors: Errors
 ): void {
@@ -596,7 +1114,7 @@ function validateQuestionSemantics(
 
 function validateRunSemantics(
   snapshot: StudySnapshot,
-  questionById: Map<string, StudyQuestion>,
+  questionById: ReadonlyMap<string, StudyQuestion>,
   errors: Errors
 ): Map<string, RetainedOccurrence[]> {
   const { progress } = snapshot;
@@ -826,7 +1344,7 @@ function validateSummarySemantics(snapshot: StudySnapshot, errors: Errors): void
 
 function validateAggregateReconciliation(
   snapshot: StudySnapshot,
-  questionById: Map<string, StudyQuestion>,
+  questionById: ReadonlyMap<string, StudyQuestion>,
   occurrences: Map<string, RetainedOccurrence[]>,
   errors: Errors
 ): void {
@@ -905,6 +1423,31 @@ function validateAggregateReconciliation(
   }
 }
 
+function validateProgressSemantics(
+  snapshot: StudySnapshot,
+  questionById: ReadonlyMap<string, StudyQuestion>,
+  errors: Errors
+): void {
+  validateSummarySemantics(snapshot, errors);
+  const occurrences = validateRunSemantics(snapshot, questionById, errors);
+  validateQuestionSemantics(snapshot, questionById, occurrences, errors);
+  validateAggregateReconciliation(snapshot, questionById, occurrences, errors);
+
+  if (snapshot.progress.stateRevision === 0) {
+    const initialSummary = snapshot.progress.priorRunSummary;
+    if (
+      Object.keys(snapshot.progress.questions).length !== 0 ||
+      snapshot.progress.runs.length !== 0 ||
+      snapshot.progress.activeRun !== null ||
+      initialSummary.runCount !== 0 ||
+      initialSummary.attemptCount !== 0 ||
+      initialSummary.correctCount !== 0
+    ) {
+      errors.add("$.progress", "stateRevision 0 requiere progreso inicial vacío");
+    }
+  }
+}
+
 function validateSemantics(snapshot: StudySnapshot, errors: Errors): void {
   const questionById = new Map<string, StudyQuestion>();
   for (let index = 0; index < snapshot.questions.length; index += 1) {
@@ -932,24 +1475,7 @@ function validateSemantics(snapshot: StudySnapshot, errors: Errors): void {
     errors.add("$.module.updatedAt", "no puede ser anterior a createdAt");
   }
 
-  validateSummarySemantics(snapshot, errors);
-  const occurrences = validateRunSemantics(snapshot, questionById, errors);
-  validateQuestionSemantics(snapshot, questionById, occurrences, errors);
-  validateAggregateReconciliation(snapshot, questionById, occurrences, errors);
-
-  if (snapshot.progress.stateRevision === 0) {
-    const initialSummary = snapshot.progress.priorRunSummary;
-    if (
-      Object.keys(snapshot.progress.questions).length !== 0 ||
-      snapshot.progress.runs.length !== 0 ||
-      snapshot.progress.activeRun !== null ||
-      initialSummary.runCount !== 0 ||
-      initialSummary.attemptCount !== 0 ||
-      initialSummary.correctCount !== 0
-    ) {
-      errors.add("$.progress", "stateRevision 0 requiere progreso inicial vacío");
-    }
-  }
+  validateProgressSemantics(snapshot, questionById, errors);
 
   try {
     const moduleBytes = canonicalUtf8ByteLength({
@@ -979,6 +1505,71 @@ export function validateSnapshot(value: unknown): ValidationResult {
   }
   validateSemantics(value, errors);
   return errors.any ? { ok: false, errors: errors.values } : { ok: true, value };
+}
+
+export interface TrustedModuleValidationContext {
+  readonly module: StudySnapshot["module"];
+  readonly questions: readonly StudyQuestion[];
+  readonly questionById: ReadonlyMap<string, StudyQuestion>;
+  readonly definitionBytes: number;
+}
+
+const SNAPSHOT_PROGRESS_ENVELOPE_BYTES =
+  canonicalUtf8ByteLength({
+    module: null,
+    progress: null,
+    questions: null,
+    schemaVersion: 1
+  }) -
+  canonicalUtf8ByteLength({ module: null, questions: null }) -
+  canonicalUtf8ByteLength(null);
+
+export function createTrustedModuleValidationContext(
+  snapshot: StudySnapshot
+): TrustedModuleValidationContext {
+  return {
+    module: snapshot.module,
+    questions: snapshot.questions,
+    questionById: new Map(snapshot.questions.map((question) => [question.id, question])),
+    definitionBytes: canonicalUtf8ByteLength({
+      module: snapshot.module,
+      questions: snapshot.questions
+    } as unknown as CanonicalJsonValue)
+  };
+}
+
+export function validateTrustedProgressSnapshot(
+  value: unknown,
+  context: TrustedModuleValidationContext
+): ValidationResult {
+  const errors = new Errors();
+  const snapshot = exactObject(value, "$", ["schemaVersion", "module", "questions", "progress"], [], errors);
+  if (!snapshot) return { ok: false, errors: errors.values };
+  literal(snapshot.schemaVersion, 1, "$.schemaVersion", errors);
+  if (snapshot.module !== context.module) {
+    errors.add("$.module", "debe conservar la definición validada por referencia");
+  }
+  if (snapshot.questions !== context.questions) {
+    errors.add("$.questions", "debe conservar las preguntas validadas por referencia");
+  }
+  validateProgressStructure(snapshot.progress, "$.progress", errors);
+  if (errors.any) return { ok: false, errors: errors.values };
+
+  const candidate = value as StudySnapshot;
+  validateProgressSemantics(candidate, context.questionById, errors);
+  try {
+    const progressBytes = canonicalUtf8ByteLength(candidate.progress as unknown as CanonicalJsonValue);
+    if (progressBytes > MAX_PROGRESS_BYTES) {
+      errors.add("$.progress", `el estado mutable supera ${MAX_PROGRESS_BYTES} bytes UTF-8 canónicos`);
+    }
+    const snapshotBytes = context.definitionBytes + progressBytes + SNAPSHOT_PROGRESS_ENVELOPE_BYTES;
+    if (snapshotBytes > MAX_SNAPSHOT_BYTES) {
+      errors.add("$", `el snapshot supera ${MAX_SNAPSHOT_BYTES} bytes UTF-8 canónicos`);
+    }
+  } catch (error) {
+    errors.add("$", error instanceof Error ? error.message : "no se pudo canonicalizar el JSON");
+  }
+  return errors.any ? { ok: false, errors: errors.values } : { ok: true, value: candidate };
 }
 
 function sourceToText(source: string | Uint8Array | ArrayBuffer): ValidationResult<string> {
@@ -1015,4 +1606,3 @@ export function parseSnapshotText(source: string | Uint8Array | ArrayBuffer): Va
   }
   return validateSnapshot(parsed);
 }
-

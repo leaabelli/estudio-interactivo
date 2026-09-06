@@ -30,6 +30,7 @@ def main() -> None:
         "Preparar un examen modelo",
         "Leer resultados y progreso",
         "Crear nuevos módulos de preguntas",
+        "Tablas, imágenes y diagramas",
         "Resolver problemas frecuentes",
         "GitHub Pages",
         "site/index.html",

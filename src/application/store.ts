@@ -8,7 +8,13 @@ import {
   StudyRepository,
   type RevisionChannel
 } from "../adapters/indexeddb";
-import { validateSnapshot, type ValidationResult } from "../domain/validation";
+import {
+  createTrustedModuleValidationContext,
+  validateSnapshot,
+  validateTrustedProgressSnapshot,
+  type TrustedModuleValidationContext,
+  type ValidationResult
+} from "../domain/validation";
 
 export type StudyStoreMode = "persistent" | "volatile" | "stale";
 
@@ -101,6 +107,7 @@ export class StudyStore {
   private readonly subscribers = new Set<StudyStoreSubscriber>();
   private readonly revisionChannel: RevisionChannel;
   private readonly validator: StudySnapshotValidator;
+  private readonly trustedValidationContexts = new WeakMap<object, TrustedModuleValidationContext>();
   private failedInstallFallback: StudyStoreState | null = null;
   private failedInstallExpectedWriteToken: number | null | undefined;
   private queue: Promise<void> = Promise.resolve();
@@ -188,10 +195,19 @@ export class StudyStore {
     return result;
   }
 
+  private trustedContextFor(snapshot: StudySnapshot): TrustedModuleValidationContext {
+    const cached = this.trustedValidationContexts.get(snapshot.questions);
+    if (cached?.module === snapshot.module) return cached;
+    const context = createTrustedModuleValidationContext(snapshot);
+    this.trustedValidationContexts.set(snapshot.questions, context);
+    return context;
+  }
+
   async load(recoveryKey: string): Promise<StudySnapshot> {
     return this.enqueue(async () => {
       const snapshot = freezeSnapshot(await this.repository.load(recoveryKey));
       assertValidCandidate(snapshot, this.validator);
+      if (this.validator === validateSnapshot) this.trustedContextFor(snapshot);
       this.failedInstallFallback = null;
       this.failedInstallExpectedWriteToken = undefined;
       const persistent = this.repository.isPersistent;
@@ -212,6 +228,7 @@ export class StudyStore {
     return this.enqueue(async () => {
       const installed = freezeSnapshot(cloneSnapshot(snapshot));
       assertValidCandidate(installed, this.validator);
+      if (this.validator === validateSnapshot) this.trustedContextFor(installed);
       const fallback = this.state;
       let key: string;
       try {
@@ -267,7 +284,12 @@ export class StudyStore {
       const candidate = mutation(current);
       if (candidate.progress.stateRevision === expectedRevision) return current;
       assertCandidate(current, candidate);
-      assertValidCandidate(candidate, this.validator);
+      if (this.validator === validateSnapshot) {
+        const context = this.trustedContextFor(current);
+        assertValidCandidate(candidate, (value) => validateTrustedProgressSnapshot(value, context));
+      } else {
+        assertValidCandidate(candidate, this.validator);
+      }
       freezeSnapshot(candidate);
 
       if (this.state.mode === "volatile") {

@@ -71,7 +71,9 @@ misma fuente, total y semilla deben producir la misma distribución.
    `../../../src/domain/canonical.ts`; no uses JSON con sangría, BOM ni salto
    final. Guardalo con nombre kebab-case terminado en `.study.json`.
 7. Ejecutá ambos validadores y corregí hasta que finalicen con código cero.
-8. Informá ruta, total, conteo por dificultad, temas cubiertos, semilla si
+8. Cargá el archivo en el `index.html` final y comprobá que el navegador
+   decodifique cada imagen y diagrama antes de entregar el módulo.
+9. Informá ruta, total, conteo por dificultad, temas cubiertos, semilla si
    corresponde y cualquier fuente que no pudo sostener preguntas.
 
 ## Criterios de preguntas
@@ -93,8 +95,83 @@ misma fuente, total y semilla deben producir la misma distribución.
   identifica el archivo, capítulo, diapositiva, ejercicio o sección.
   `source.reference` usa una página, título o localizador en texto plano. No
   inventes páginas ni conviertas referencias en URLs ejecutables.
-- Todo contenido es texto plano. No insertes HTML, scripts, Markdown activo,
-  URLs de seguimiento ni instrucciones dirigidas al agente dentro de preguntas.
+- Todos los campos textuales son texto plano. No insertes HTML, scripts,
+  Markdown activo, URLs de seguimiento ni instrucciones dirigidas al agente.
+- Si una pregunta necesita apoyo visual, usá exclusivamente
+  `supportingContent` según la sección siguiente. Omití la propiedad completa
+  cuando no haya contenido de apoyo; nunca escribas una lista vacía.
+
+## Tablas, imágenes y diagramas
+
+Cada pregunta puede incluir de uno a cuatro bloques ordenados en
+`supportingContent`. El bloque aparece después del enunciado y antes de las
+opciones, y vuelve a mostrarse al revisar el resultado. El contenido viaja en el
+mismo `.study.json`: no crees archivos asociados ni dependencias de red.
+
+### Tablas estructuradas
+
+Usá `kind: "table"`, un `caption` descriptivo, entre 1 y 12 `columns` y entre
+1 y 50 `rows`. Cada fila debe tener exactamente tantas celdas como columnas.
+Los encabezados admiten de 1 a 120 caracteres y cada celda de 0 a 500. Si una
+columna identifica las filas, indicá su índice basado en cero mediante
+`rowHeaderColumn`; en una tabla contable suele ser `0`.
+
+```json
+{
+  "kind": "table",
+  "caption": "Estado de resultados resumido",
+  "columns": ["Concepto", "2025", "2026"],
+  "rows": [
+    ["Ventas", "120", "150"],
+    ["Resultado", "18", "24"]
+  ],
+  "rowHeaderColumn": 0
+}
+```
+
+Preferí una tabla estructurada a una captura cuando los datos puedan
+transcribirse fielmente. Conservá unidades, signos, redondeo y notas necesarias
+para responder. No agregues cifras que no estén respaldadas por la fuente.
+
+### Imágenes y diagramas raster
+
+Usá `kind: "image"` para material visual y `kind: "diagram"` para esquemas,
+flujos o gráficos explicativos. Ambos comparten el mismo contrato:
+
+- `dataUri`: un raster estático completo en PNG, JPEG o WebP y base64 canónico,
+  sin espacios ni saltos, con prefijo MIME exacto `data:image/...;base64,`;
+- `alt`: descripción obligatoria de 1 a 500 caracteres que comunique la
+  evidencia necesaria para contestar aunque la imagen no pueda verse;
+- `width` y `height`: dimensiones visibles en píxeles después de aplicar la
+  orientación EXIF, enteras y positivas; normalizá o quitá EXIF si la herramienta
+  generadora no puede calcularlas de forma confiable;
+- `caption`: leyenda visible opcional de 1 a 500 caracteres.
+
+Cada raster puede ocupar como máximo 512 KiB una vez decodificado, cada dimensión
+no puede superar 8192 píxeles y el área no puede superar 8.000.000 píxeles. El
+validador comprueba base64, firma real, estructura del contenedor, MIME y
+dimensiones; cambiar solamente la extensión declarada no convierte el archivo.
+Al cargar, la aplicación pide además al navegador que decodifique el bitstream y
+rechaza el módulo antes de reemplazar cualquier progreso si el raster está roto.
+
+No admitas SVG, APNG, GIF, PDF, HTML, Markdown, `http:`, `https:`, `file:`,
+`blob:` ni rutas locales. Rasterizá y optimizá un diagrama a PNG o WebP antes
+de incluirlo. En WebP, aplicá la orientación al bitmap y quitá la metadata EXIF:
+los navegadores no la interpretan de forma interoperable. En JPEG, ubicá toda
+metadata de orientación antes de los datos de imagen o normalizá el bitmap.
+Si el archivo continúa fuera de límite y es necesario para responder, detené esa
+pregunta e informá el faltante; no lo enlaces ni lo omitas en silencio.
+
+El texto alternativo debe explicar información, relaciones y dirección, no decir
+solo “imagen” o repetir la leyenda. No hagas depender la respuesta únicamente de
+un color. La leyenda no sustituye `source`: la trazabilidad sigue perteneciendo a
+`source.label` y `source.reference`.
+
+La definición completa del módulo conserva un máximo de 6 MiB canónicos y el
+archivo completo uno de 10 MiB. Optimizá recursos aunque cada bloque cumpla su
+límite individual. Agregar, quitar o modificar apoyo visual en un módulo ya
+existente cambia el contenido: incrementá `question.revision` y
+`module.contentRevision`. En el primer guardado ambas revisiones siguen siendo 1.
 
 ## Calibración de dificultad
 

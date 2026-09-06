@@ -2,7 +2,8 @@
 
 Aplicación de estudio offline y autocontenida. Importa módulos `*.study.json`,
 crea exámenes modelo de 10 preguntas, evita repeticiones innecesarias y conserva
-cobertura, precisión, dominio e historial entre sesiones.
+cobertura, precisión, dominio e historial entre sesiones. Las preguntas pueden
+incluir tablas, imágenes y diagramas accesibles.
 
 ## Distribución
 
@@ -13,8 +14,9 @@ módulos ni otros recursos durante el uso.
 Los demás archivos pertenecen al proyecto de desarrollo o a su documentación:
 
 - `modulo-prueba.study.json`: banco sintético de 48 preguntas para pruebas y
-  demostraciones locales. Se carga desde la aplicación como cualquier otro
-  módulo externo; no forma parte del HTML ni del deploy.
+  demostraciones locales, incluido un ejemplo de cada formato visual. Se carga
+  desde la aplicación como cualquier otro módulo externo; no forma parte del
+  HTML ni del deploy.
 - `output/pdf/manual-usuario.pdf`: manual de uso en español para consulta local.
   Se genera y verifica como artefacto documental, pero no se publica en GitHub
   Pages.
@@ -29,7 +31,8 @@ un examen. Para probar el proyecto podés seleccionar
 cada acción aceptada en una cola local. Para mover el avance, usá
 **Módulo > Guardar archivo** y conservá el `.study.json` más reciente. Ese
 archivo es dato portátil del usuario, no una dependencia ni una parte de la
-aplicación distribuida.
+aplicación distribuida. Las tablas y los recursos raster viajan incrustados en
+ese mismo JSON, de modo que tampoco necesitan internet ni archivos auxiliares.
 
 En iPhone o iPad, la vista previa de archivos de WhatsApp y Archivos no funciona
 como un navegador completo. Abrí el enlace de la versión publicada directamente
@@ -56,7 +59,8 @@ local; y crea `site/` con exactamente el único artefacto publicable:
 
 La skill [generador-modulos-preguntas](.agents/skills/generador-modulos-preguntas/SKILL.md)
 documenta cantidades explícitas o distribución aleatoria balanceada, calibración
-de dificultad, trazabilidad y progreso inicial. Todo módulo nuevo debe pasar:
+de dificultad, trazabilidad, contenido visual seguro y progreso inicial. Todo
+módulo nuevo debe pasar:
 
 ```bash
 bun run validate:module -- ruta/al/modulo.study.json

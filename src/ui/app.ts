@@ -3,6 +3,7 @@ import type {
   Difficulty,
   DifficultyFilter,
   Population,
+  QuestionContentBlock,
   StudyAnswer,
   StudyQuestion,
   StudySnapshot,
@@ -105,6 +106,62 @@ function node<K extends keyof HTMLElementTagNameMap>(
     element.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
   return element;
+}
+
+async function decodeRasterImage(dataUri: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    let settled = false;
+    let timeout = 0;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      image.onload = null;
+      image.onerror = null;
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (image.naturalWidth < 1 || image.naturalHeight < 1) {
+        reject(new TypeError("la imagen no tiene dimensiones decodificadas"));
+        return;
+      }
+      resolve();
+    };
+    timeout = window.setTimeout(
+      () => finish(new TypeError("la decodificación excedió 10 segundos")),
+      10_000,
+    );
+    const canDecode = typeof image.decode === "function";
+    image.onload = canDecode ? null : () => finish();
+    image.onerror = () => finish(new TypeError("el navegador rechazó el bitstream"));
+    image.src = dataUri;
+    if (canDecode) {
+      void image.decode().then(
+        () => finish(),
+        () => finish(new TypeError("el navegador no pudo decodificar el bitstream")),
+      );
+    }
+  });
+}
+
+async function validateRasterDecodability(snapshot: StudySnapshot): Promise<void> {
+  const decodedDataUris = new Set<string>();
+  for (const [questionIndex, question] of snapshot.questions.entries()) {
+    for (const [blockIndex, block] of (question.supportingContent ?? []).entries()) {
+      if (block.kind === "table") continue;
+      const path = `$.questions[${questionIndex}].supportingContent[${blockIndex}].dataUri`;
+      if (!decodedDataUris.has(block.dataUri)) {
+        try {
+          await decodeRasterImage(block.dataUri);
+          decodedDataUris.add(block.dataUri);
+        } catch {
+          throw new TypeError(`${path}: el navegador no pudo decodificar el recurso raster`);
+        }
+      }
+    }
+  }
 }
 
 function svgNode<K extends keyof SVGElementTagNameMap>(
@@ -796,6 +853,7 @@ class Application {
       ),
       node("h1", { className: "question-prompt route-title", text: question.prompt, attrs: { tabindex: "-1" } }),
     );
+    const supportingContent = this.renderQuestionSupportingContent(question);
     const fieldset = node("fieldset", { className: "answers" });
     fieldset.append(node("legend", { className: "visually-hidden", text: `Respuesta para la pregunta ${run.currentIndex + 1}` }));
     for (const optionId of item.optionOrder) {
@@ -816,8 +874,82 @@ class Application {
     dontKnow.checked = item.answer?.kind === "dontKnow";
     dontKnow.disabled = this.stale;
     fieldset.append(node("label", { className: "answer" }, dontKnow, node("span", { text: "No sé" })));
+    if (supportingContent) shell.append(supportingContent);
     shell.append(fieldset);
     return shell;
+  }
+
+  private renderQuestionSupportingContent(question: StudyQuestion, review = false): HTMLElement | null {
+    if (!question.supportingContent?.length) return null;
+    const wrapper = node("div", {
+      className: `question-content${review ? " question-content--review" : ""}`,
+      data: { role: "question-content" },
+    });
+    for (const block of question.supportingContent) {
+      wrapper.append(this.renderQuestionContentBlock(block, review));
+    }
+    return wrapper;
+  }
+
+  private renderQuestionContentBlock(block: QuestionContentBlock, review: boolean): HTMLElement {
+    if (block.kind === "table") {
+      const table = node("table", { className: "question-table" });
+      table.append(node("caption", { text: block.caption }));
+      const headerRow = node("tr");
+      for (const column of block.columns) {
+        headerRow.append(node("th", { text: column, attrs: { scope: "col" } }));
+      }
+      table.append(node("thead", {}, headerRow));
+      const body = node("tbody");
+      for (const row of block.rows) {
+        const tableRow = node("tr");
+        row.forEach((cell, columnIndex) => {
+          tableRow.append(block.rowHeaderColumn === columnIndex
+            ? node("th", { text: cell, attrs: { scope: "row" } })
+            : node("td", { text: cell }));
+        });
+        body.append(tableRow);
+      }
+      table.append(body);
+      return node("div", {
+        className: "question-content-block question-table-scroll",
+        attrs: { role: "region", "aria-label": block.caption, tabindex: "0" },
+        data: { contentKind: "table" },
+      }, table);
+    }
+
+    const image = node("img", {
+      attrs: {
+        alt: block.alt,
+        width: String(block.width),
+        height: String(block.height),
+        decoding: "async",
+        loading: review ? "lazy" : "eager",
+      },
+    });
+    const fallback = node("div", {
+      className: "question-media-fallback",
+      attrs: { hidden: "", role: "status" },
+    },
+    node("strong", { text: "No se pudo mostrar este recurso visual" }),
+    node("p", { text: block.alt }));
+    image.addEventListener("error", () => {
+      image.remove();
+      fallback.hidden = false;
+    });
+    image.src = block.dataUri;
+    return node("figure", {
+      className: "question-content-block question-media",
+      data: { contentKind: block.kind },
+    },
+    image,
+    fallback,
+    block.caption
+      ? node("figcaption", {},
+        node("span", { className: "visual-kind", text: block.kind === "diagram" ? "Diagrama" : "Imagen" }),
+        node("span", { text: block.caption }),
+      )
+      : null);
   }
 
   private renderQuestionRail(): HTMLElement {
@@ -1094,6 +1226,7 @@ class Application {
       const isCorrect = selectedId === question.correctOptionId;
       list.append(node("li", { className: "result-item", data: { result: isCorrect ? "correct" : "incorrect" } },
         node("div", { className: "result-item-heading" }, node("span", { className: "result-marker", text: isCorrect ? "✓" : "×", attrs: { "aria-hidden": "true" } }), node("h3", { text: question.prompt })),
+        this.renderQuestionSupportingContent(question, true),
         node("p", { className: "result-answer", text: `Tu respuesta: ${selected}` }),
         node("p", { className: "result-answer", text: `Respuesta correcta: ${correct}` }),
         node("strong", { className: "result-verdict", text: isCorrect ? "Correcta" : "Incorrecta" }),
@@ -1185,6 +1318,7 @@ class Application {
         throw new TypeError(details || "El archivo no cumple el contrato del módulo.");
       }
       const candidate = parsed as StudySnapshot;
+      await validateRasterDecodability(candidate);
       const candidateKey = recoveryKeyForSnapshot(candidate);
       const storeStateBeforePreview = this.store.getState();
       const ownedWriteToken = storeStateBeforePreview.recoveryKey === candidateKey

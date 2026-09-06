@@ -1,15 +1,17 @@
+import { deflateSync } from "node:zlib";
 import { canonicalStringify, type CanonicalJsonValue } from "../src/domain/canonical";
 import {
   DIFFICULTIES,
   emptyPriorRunSummary,
   type Difficulty,
+  type QuestionContentBlock,
   type StudyQuestion,
   type StudySnapshot
 } from "../src/domain/types";
 import { validateSnapshot } from "../src/domain/validation";
 
-const MODULE_ID = "fundamentos-estudio-razonamiento";
-const FIXED_TIMESTAMP = "2026-09-06T12:00:00Z";
+const MODULE_ID = "fundamentos-estudio-razonamiento-visual";
+const FIXED_TIMESTAMP = "2026-09-06T18:00:00Z";
 const OPTION_IDS = ["a", "b", "c", "d"] as const;
 
 interface QuestionDraft {
@@ -19,7 +21,152 @@ interface QuestionDraft {
   distractors: [string, string, string];
   explanation: string;
   reference: string;
+  supportingContent?: QuestionContentBlock[];
 }
+
+type Rgba = readonly [number, number, number, number];
+
+function concatenate(parts: readonly Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
+function uint32Bytes(value: number): Uint8Array {
+  return new Uint8Array([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(name: string, data: Uint8Array): Uint8Array {
+  const type = new TextEncoder().encode(name);
+  return concatenate([uint32Bytes(data.length), type, data, uint32Bytes(crc32(concatenate([type, data])))]);
+}
+
+function fillRect(
+  pixels: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  color: Rgba
+): void {
+  const left = Math.max(0, x);
+  const top = Math.max(0, y);
+  const right = Math.min(canvasWidth, x + width);
+  const bottom = Math.min(canvasHeight, y + height);
+  for (let row = top; row < bottom; row += 1) {
+    for (let column = left; column < right; column += 1) {
+      const offset = (row * canvasWidth + column) * 4;
+      pixels.set(color, offset);
+    }
+  }
+}
+
+function drawArrowRight(
+  pixels: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  x: number,
+  centerY: number,
+  length: number,
+  color: Rgba
+): void {
+  const head = 24;
+  fillRect(pixels, canvasWidth, canvasHeight, x, centerY - 4, length - head, 9, color);
+  for (let step = 0; step < head; step += 1) {
+    const halfHeight = Math.floor(((head - step) * 16) / head);
+    fillRect(
+      pixels,
+      canvasWidth,
+      canvasHeight,
+      x + length - head + step,
+      centerY - halfHeight,
+      1,
+      (halfHeight * 2) + 1,
+      color
+    );
+  }
+}
+
+function rasterPng(
+  width: number,
+  height: number,
+  paint: (pixels: Uint8Array) => void
+): string {
+  const pixels = new Uint8Array(width * height * 4);
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    pixels.set([248, 250, 252, 255], offset);
+  }
+  paint(pixels);
+  const raw = new Uint8Array((width * 4 + 1) * height);
+  for (let row = 0; row < height; row += 1) {
+    const target = row * (width * 4 + 1);
+    raw[target] = 0;
+    raw.set(pixels.subarray(row * width * 4, (row + 1) * width * 4), target + 1);
+  }
+  const header = new Uint8Array(13);
+  header.set(uint32Bytes(width), 0);
+  header.set(uint32Bytes(height), 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  const compressed = new Uint8Array(deflateSync(raw));
+  const png = concatenate([
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", compressed),
+    pngChunk("IEND", new Uint8Array())
+  ]);
+  return `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
+}
+
+const RECALL_IMAGE_WIDTH = 720;
+const RECALL_IMAGE_HEIGHT = 360;
+const RECALL_IMAGE = rasterPng(RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, (pixels) => {
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 58, 56, 270, 248, [255, 255, 255, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 58, 56, 270, 6, [199, 208, 219, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 58, 298, 270, 6, [199, 208, 219, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 58, 56, 6, 248, [199, 208, 219, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 322, 56, 6, 248, [199, 208, 219, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 94, 104, 196, 18, [184, 204, 235, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 94, 154, 164, 13, [220, 227, 236, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 94, 194, 185, 13, [220, 227, 236, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 396, 78, 260, 204, [220, 232, 248, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 396, 78, 260, 7, [47, 95, 167, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 396, 275, 260, 7, [47, 95, 167, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 396, 78, 7, 204, [47, 95, 167, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 649, 78, 7, 204, [47, 95, 167, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 438, 132, 176, 18, [47, 95, 167, 255]);
+  fillRect(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 438, 184, 126, 13, [95, 107, 122, 255]);
+  drawArrowRight(pixels, RECALL_IMAGE_WIDTH, RECALL_IMAGE_HEIGHT, 340, 180, 45, [47, 95, 167, 255]);
+});
+
+const FEEDBACK_DIAGRAM_WIDTH = 840;
+const FEEDBACK_DIAGRAM_HEIGHT = 300;
+const FEEDBACK_DIAGRAM = rasterPng(FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, (pixels) => {
+  fillRect(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 35, 92, 190, 116, [220, 232, 248, 255]);
+  fillRect(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 325, 92, 190, 116, [216, 243, 231, 255]);
+  fillRect(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 615, 92, 190, 116, [255, 241, 206, 255]);
+  fillRect(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 72, 135, 116, 18, [47, 95, 167, 255]);
+  fillRect(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 362, 135, 116, 18, [19, 113, 91, 255]);
+  fillRect(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 652, 135, 116, 18, [138, 87, 0, 255]);
+  drawArrowRight(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 242, 150, 66, [95, 107, 122, 255]);
+  drawArrowRight(pixels, FEEDBACK_DIAGRAM_WIDTH, FEEDBACK_DIAGRAM_HEIGHT, 532, 150, 66, [95, 107, 122, 255]);
+});
 
 const drafts: Record<Difficulty, QuestionDraft[]> = {
   facil: [
@@ -33,7 +180,15 @@ const drafts: Record<Difficulty, QuestionDraft[]> = {
         "Copiar literalmente el texto para conservar su redacción"
       ],
       explanation: "La recuperación activa obliga a traer la información desde la memoria. Releer puede producir familiaridad, pero no comprueba que la idea pueda recuperarse sin ayuda.",
-      reference: "Recuperación activa"
+      reference: "Recuperación activa",
+      supportingContent: [{
+        kind: "image",
+        dataUri: RECALL_IMAGE,
+        alt: "A la izquierda hay una hoja de apuntes; una flecha apunta a una tarjeta separada que representa recordar sin mirar.",
+        caption: "Separar los apuntes del intento obliga a recuperar la idea desde la memoria.",
+        width: RECALL_IMAGE_WIDTH,
+        height: RECALL_IMAGE_HEIGHT
+      }]
     },
     {
       topic: "Práctica espaciada",
@@ -215,7 +370,15 @@ const drafts: Record<Difficulty, QuestionDraft[]> = {
         "Repetir inmediatamente la alternativa correcta hasta reconocerla"
       ],
       explanation: "La secuencia combina recuperación, corrección y una nueva oportunidad espaciada. Ver la respuesta antes elimina el intento de recuperación; repetir de inmediato puede medir memoria reciente.",
-      reference: "Ciclo de práctica"
+      reference: "Ciclo de práctica",
+      supportingContent: [{
+        kind: "diagram",
+        dataUri: FEEDBACK_DIAGRAM,
+        alt: "Tres bloques conectados muestran la secuencia intento, feedback y ajuste antes de repetirla más adelante.",
+        caption: "Intento → feedback → ajuste → nuevo intento espaciado.",
+        width: FEEDBACK_DIAGRAM_WIDTH,
+        height: FEEDBACK_DIAGRAM_HEIGHT
+      }]
     },
     {
       topic: "Inferencia causal",
@@ -337,7 +500,18 @@ const drafts: Record<Difficulty, QuestionDraft[]> = {
         "81%, porque deben multiplicarse los dos porcentajes de acierto"
       ],
       explanation: "El conjunto positivo contiene 9 casos verdaderos y 9 falsos. La sensibilidad del 90% no es la probabilidad posterior: también importa cuántos casos sin condición producen falsos positivos.",
-      reference: "Tasa base y valor predictivo"
+      reference: "Tasa base y valor predictivo",
+      supportingContent: [{
+        kind: "table",
+        caption: "Resultados de la prueba en 100 casos",
+        columns: ["Situación", "Prueba positiva", "Prueba negativa", "Total"],
+        rows: [
+          ["Con condición", "9", "1", "10"],
+          ["Sin condición", "9", "81", "90"],
+          ["Total", "18", "82", "100"]
+        ],
+        rowHeaderColumn: 0
+      }]
     },
     {
       topic: "Arquitectura de práctica",
@@ -625,7 +799,8 @@ function buildQuestions(difficulty: Difficulty, entries: QuestionDraft[]): Study
       source: {
         label: "Banco sintético original (sin material de cursos)",
         reference: `Fundamentos de estudio y razonamiento · ${draft.reference}`
-      }
+      },
+      ...(draft.supportingContent ? { supportingContent: draft.supportingContent } : {})
     };
   });
 }
