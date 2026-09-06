@@ -32,6 +32,16 @@ import {
   saveSnapshotFile,
 } from "../adapters/files";
 import { validateSnapshot } from "../domain/validation";
+import {
+  buildRunTrend,
+  clampPercent,
+  completedRunBelongsToSnapshot,
+  hashForRoute,
+  navigationBounds,
+  routeFromHash,
+  scorePercent,
+  type RouteView,
+} from "./presentation";
 
 type View = "empty" | "recoveries" | "study" | "exam" | "results" | "progress" | "module";
 type NoticeKind = "success" | "warning" | "error";
@@ -54,8 +64,22 @@ interface RecoveryLike {
   error?: string;
 }
 
+interface ShellRefs {
+  shell: HTMLElement;
+  navLinks: Map<"study" | "progress" | "module", HTMLAnchorElement>;
+  moduleTitle: HTMLElement;
+  moduleMeta: HTMLElement;
+  saveStatus: HTMLElement;
+  bannerSlot: HTMLElement;
+  outlet: HTMLElement;
+  snackbar: HTMLElement;
+  liveRegion: HTMLElement;
+}
+
 type Child = Node | string | number | null | undefined | false;
 let inputSerial = 0;
+let svgSerial = 0;
+let dialogSerial = 0;
 
 function node<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -81,6 +105,40 @@ function node<K extends keyof HTMLElementTagNameMap>(
     element.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
   return element;
+}
+
+function svgNode<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  options: {
+    className?: string;
+    text?: string;
+    attrs?: Record<string, string>;
+  } = {},
+  ...children: Child[]
+): SVGElementTagNameMap[K] {
+  const namespace = document.documentElement.namespaceURI?.replace("1999/xhtml", "2000/svg")
+    ?? ["http:", "", "www.w3.org", "2000", "svg"].join("/");
+  const element = document.createElementNS(namespace, tag);
+  if (options.className) element.setAttribute("class", options.className);
+  if (options.text !== undefined) element.textContent = options.text;
+  for (const [name, value] of Object.entries(options.attrs ?? {})) element.setAttribute(name, value);
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    element.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return element;
+}
+
+function appIcon(kind: "study" | "progress" | "module"): SVGSVGElement {
+  const paths = {
+    study: "M4 5.5A2.5 2.5 0 0 1 6.5 3H11v15H6.5A2.5 2.5 0 0 0 4 20.5Zm16 0A2.5 2.5 0 0 0 17.5 3H13v15h4.5a2.5 2.5 0 0 1 2.5 2.5Z",
+    progress: "M4 19V9h3v10Zm6 0V4h3v15Zm6 0v-7h3v7Z",
+    module: "M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm2 4h10V6H7Zm0 4h10v-2H7Zm0 4h7v-2H7Z",
+  };
+  return svgNode("svg", {
+    className: "nav-icon",
+    attrs: { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
+  }, svgNode("path", { attrs: { d: paths[kind] } }));
 }
 
 function button(label: string, className: string, action: () => void | Promise<void>): HTMLButtonElement {
@@ -149,6 +207,10 @@ class Application {
   private stale = false;
   private busy = false;
   private pendingMutations = 0;
+  private shellRefs: ShellRefs | null = null;
+  private renderedView: View | null = null;
+  private snackbarTimer: number | null = null;
+  private shownNoticeKey = "";
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -170,7 +232,10 @@ class Application {
             persistent: true,
           };
         }
-        if (this.root.childNodes.length) this.render();
+        if (this.root.childNodes.length) {
+          const refreshRoute = this.view === "progress" || this.view === "module" || this.view === "results" || this.view === "recoveries";
+          this.render(refreshRoute);
+        }
       });
       this.recoveries = (await this.repository.listRecoveries()) as RecoveryLike[];
       this.view = this.recoveries.length ? "recoveries" : "empty";
@@ -191,21 +256,58 @@ class Application {
         persistent: true,
       };
     }
+    window.addEventListener("popstate", () => this.restoreRouteFromHistory());
     this.render();
   }
 
-  private setView(view: View, focus = true): void {
+  private setView(
+    view: View,
+    focus = true,
+    historyMode: "push" | "replace" | "none" = "push",
+  ): void {
     this.view = view;
-    if (view === "study" || view === "progress" || view === "module") {
-      history.replaceState(null, "", `#${view === "study" ? "estudiar" : view === "progress" ? "progreso" : "modulo"}`);
+    if (this.isRouteView(view) && historyMode !== "none") {
+      const targetHash = hashForRoute(view);
+      if (historyMode === "replace") history.replaceState({ view }, "", targetHash);
+      else if (location.hash !== targetHash) history.pushState({ view }, "", targetHash);
     }
     this.render();
-    if (focus) requestAnimationFrame(() => this.root.querySelector<HTMLElement>("h1")?.focus());
+    if (focus) {
+      requestAnimationFrame(() => {
+        this.shellRefs?.outlet.querySelector<HTMLElement>(".route-title")?.focus({ preventScroll: true });
+      });
+    }
+  }
+
+  private isRouteView(view: View): view is RouteView {
+    return view === "study" || view === "exam" || view === "results" || view === "progress" || view === "module";
+  }
+
+  private normalizeRoute(view: RouteView): RouteView {
+    if (view === "exam" && !this.snapshot?.progress.activeRun) return "study";
+    const hasRememberedResult = Boolean(
+      this.snapshot && this.resultRun && completedRunBelongsToSnapshot(this.snapshot, this.resultRun),
+    );
+    if (view === "results" && !hasRememberedResult && !this.snapshot?.progress.runs.length) return "study";
+    return view;
+  }
+
+  private restoreRouteFromHistory(): void {
+    if (!this.snapshot) return;
+    const route = routeFromHash(location.hash) ?? "study";
+    const normalized = this.normalizeRoute(route);
+    this.view = normalized;
+    if (normalized !== route) history.replaceState({ view: normalized }, "", hashForRoute(normalized));
+    this.render();
+    requestAnimationFrame(() => {
+      this.shellRefs?.outlet.querySelector<HTMLElement>(".route-title")?.focus({ preventScroll: true });
+    });
   }
 
   private async install(snapshot: StudySnapshot, expectedWriteToken: number | null): Promise<void> {
     await this.store.install(snapshot, expectedWriteToken);
     this.snapshot = this.store.getState().snapshot;
+    this.resultRun = null;
     this.volatile = this.store.getState().mode === "volatile";
     this.stale = this.store.getState().mode === "stale";
     this.notice = {
@@ -213,7 +315,7 @@ class Application {
       title: "Módulo listo",
       detail: `${snapshot.questions.length} preguntas cargadas. El progreso del archivo se conservó exactamente.`,
     };
-    this.setView(snapshot.progress.activeRun ? "study" : "study");
+    this.setView("study", true, "replace");
   }
 
   private async commit(mutation: (snapshot: StudySnapshot) => StudySnapshot, success?: string): Promise<StudySnapshot | null> {
@@ -250,128 +352,249 @@ class Application {
     }
   }
 
-  private render(): void {
-    this.root.replaceChildren();
-    if (!this.snapshot || this.view === "empty" || this.view === "recoveries") {
-      this.root.append(this.renderEntry());
+  private render(forceRoute = false): void {
+    const wantsAppShell = Boolean(
+      this.snapshot && this.view !== "empty" && (this.view !== "recoveries" || this.snapshot),
+    );
+    if (!wantsAppShell) {
+      this.shellRefs = null;
+      this.renderedView = null;
+      this.root.replaceChildren(this.renderEntry());
       return;
     }
-    if (this.view === "exam") {
-      this.root.append(this.renderFocusedExam());
-      return;
+
+    if (!this.shellRefs || !this.shellRefs.shell.isConnected) {
+      this.mountAppShell();
+      forceRoute = true;
     }
-    this.root.append(this.renderShell());
+    this.syncAppChrome();
+    if (forceRoute || this.renderedView !== this.view) {
+      this.shellRefs!.outlet.replaceChildren(this.renderRoute());
+      this.renderedView = this.view;
+    } else {
+      this.syncCurrentRoute();
+    }
   }
 
   private renderEntry(): HTMLElement {
-    const main = node("main", { className: "boot view-enter", attrs: { id: "main-content", tabindex: "-1" } });
-    main.append(node("p", { className: "eyebrow", text: "ESTUDIO INTERACTIVO" }));
+    const main = node("main", { className: "boot route-panel", attrs: { id: "main-content", tabindex: "-1" } });
+    main.append(node("div", { className: "entry-brand" },
+      node("span", { className: "brand-mark", text: "E", attrs: { "aria-hidden": "true" } }),
+      node("span", { text: "Estudio Interactivo" }),
+    ));
     if (this.view === "recoveries" && this.recoveries.length) {
       main.append(
-        node("h1", { text: "Elegí qué progreso recuperar", attrs: { tabindex: "-1" } }),
-        node("p", { text: "Nada se abre automáticamente. Cada copia queda ligada a este navegador y ubicación del HTML." }),
+        node("p", { className: "eyebrow", text: "RECUPERACIÓN LOCAL" }),
+        node("h1", { className: "route-title", text: "Elegí tu progreso", attrs: { tabindex: "-1" } }),
+        node("p", { className: "page-intro", text: "Cada copia pertenece a este navegador y a esta ubicación del HTML." }),
+        this.renderRecoveryList(),
+        this.importControl("Cargar otro módulo"),
       );
-      const list = node("ul", { className: "recovery-list" });
-      for (const recovery of this.recoveries) {
-        const title = recovery.title || recovery.subject || recovery.key;
-        const actions = node("div", { className: "button-row" });
-        if (!recovery.corrupt) {
-          actions.append(
-            button("Abrir", "primary", () => this.openRecovery(recovery.key)),
-            button("Exportar…", "secondary", () => this.exportRecovery(recovery.key)),
-          );
-        }
-        actions.append(button("Eliminar…", "danger", () => this.deleteRecovery(recovery)));
-        list.append(node("li", { className: "recovery-item" },
-          node("h2", { text: title }),
-          node("p", { text: recovery.corrupt
-            ? `Copia dañada: ${recovery.error || "no se pudo validar"}`
-            : `Revisión de contenido ${recovery.contentRevision ?? "—"} · estado ${recovery.stateRevision ?? "—"} · ${formatDate(recovery.updatedAt)}` }),
-          actions,
-        ));
-      }
-      main.append(list, this.importControl("Cargar otro módulo"));
     } else {
       main.append(
-        node("h1", { text: "Tu estudio empieza con un módulo", attrs: { tabindex: "-1" } }),
-        node("p", { text: "Cargá un archivo .study.json. Contiene las preguntas y, cuando lo exportes, también tu progreso. Todo se procesa en este dispositivo y sin internet." }),
-        this.importControl("Cargar módulo"),
-        node("p", { text: "Para probar la aplicación, elegí el archivo modulo-prueba.study.json incluido junto a index.html." }),
+        node("div", { className: "entry-copy" },
+          node("p", { className: "eyebrow", text: "TU ESPACIO DE PRÁCTICA" }),
+          node("h1", { className: "route-title", text: "Estudiá a tu ritmo", attrs: { tabindex: "-1" } }),
+          node("p", { className: "page-intro", text: "Cargá un módulo, practicá en etapas y llevate el progreso dentro del mismo archivo." }),
+        ),
+        node("section", { className: "import-card", attrs: { "aria-label": "Cargar módulo de estudio" } },
+          node("div", { className: "import-illustration", attrs: { "aria-hidden": "true" } }, ".study"),
+          node("h2", { text: "Abrí un módulo" }),
+          node("p", { text: "Todo se procesa en este dispositivo. No hace falta internet." }),
+          this.importControl("Elegir archivo"),
+          node("p", { className: "supporting", text: "Podés empezar con modulo-prueba.study.json." }),
+        ),
       );
     }
     if (this.notice) main.prepend(this.renderNotice());
     return main;
   }
 
-  private renderShell(): HTMLElement {
+  private mountAppShell(): void {
+    const snapshot = this.snapshot!;
     const shell = node("div", { className: "app-shell" });
     const nav = node("nav", { className: "side-nav", attrs: { "aria-label": "Áreas principales" } });
-    nav.append(node("a", { className: "brand", attrs: { href: "#estudiar" } }, "Estudio ", node("span", { text: "Interactivo" })));
+    const brand = node("a", {
+      className: "brand",
+      attrs: { href: "#estudiar", "aria-label": "Ir a Estudiar" },
+      on: { click: (event) => { event.preventDefault(); this.setView("study"); } },
+    }, node("span", { className: "brand-mark", text: "E" }), node("span", { className: "brand-name", text: "Estudio" }));
     const list = node("ul", { className: "nav-list" });
-    const links: Array<["study" | "progress" | "module", string, string]> = [
-      ["study", "Estudiar", "estudiar"],
-      ["progress", "Progreso", "progreso"],
-      ["module", "Módulo", "modulo"],
+    const navLinks = new Map<"study" | "progress" | "module", HTMLAnchorElement>();
+    const links: Array<["study" | "progress" | "module", string]> = [
+      ["study", "Estudiar"],
+      ["progress", "Progreso"],
+      ["module", "Módulo"],
     ];
-    for (const [view, label, hash] of links) {
-      const active = (this.view === "results" ? "study" : this.view) === view;
+    for (const [view, label] of links) {
       const link = node("a", {
         className: "nav-link",
-        text: label,
-        attrs: { href: `#${hash}`, ...(active ? { "aria-current": "page" } : {}) },
+        attrs: { href: hashForRoute(view) },
         on: { click: (event) => { event.preventDefault(); this.setView(view); } },
-      });
+      }, appIcon(view), node("span", { text: label }));
+      navLinks.set(view, link);
       list.append(node("li", {}, link));
     }
-    nav.append(list, node("div", { className: "save-status" },
-      node("strong", { text: this.stale ? "Solo lectura" : this.volatile ? "Solo en memoria" : "Recuperación local activa" }),
-      node("div", { text: this.snapshot ? `Estado ${this.snapshot.progress.stateRevision}` : "Sin módulo" }),
-    ));
+    nav.append(brand, list);
 
-    const main = node("main", { className: "main", attrs: { id: "main-content" } });
-    const content = node("div", { className: "content view-enter" });
-    if (this.notice) content.append(this.renderNotice());
-    if (this.view === "progress") content.append(this.renderProgress());
-    else if (this.view === "module") content.append(this.renderModule());
-    else if (this.view === "results") content.append(this.renderResults());
-    else content.append(this.renderStudy());
-    main.append(content);
-    shell.append(nav, main, this.renderStatusRegion());
-    return shell;
+    const moduleTitle = node("strong", { className: "app-module-title", text: snapshot.module.title });
+    const moduleMeta = node("span", { className: "app-module-meta", text: snapshot.module.subject });
+    const saveStatus = node("div", { className: "save-status", attrs: { role: "status", "aria-live": "polite" } });
+    const appBar = node("header", { className: "app-bar" },
+      node("div", { className: "app-bar-module" }, moduleTitle, moduleMeta),
+      saveStatus,
+    );
+    const bannerSlot = node("div", { className: "banner-slot" });
+    const outlet = node("div", { className: "route-outlet" });
+    const main = node("main", { className: "main", attrs: { id: "main-content" } }, outlet);
+    const snackbar = node("div", { className: "snackbar", attrs: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
+    const liveRegion = node("div", { className: "visually-hidden", attrs: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
+    const frame = node("div", { className: "app-frame" }, appBar, bannerSlot, main);
+    shell.append(nav, frame, snackbar, liveRegion);
+    this.root.replaceChildren(shell);
+    if (this.snackbarTimer !== null) window.clearTimeout(this.snackbarTimer);
+    this.snackbarTimer = null;
+    this.shownNoticeKey = "";
+    this.shellRefs = { shell, navLinks, moduleTitle, moduleMeta, saveStatus, bannerSlot, outlet, snackbar, liveRegion };
+    this.renderedView = null;
   }
 
   private renderNotice(): HTMLElement {
     const notice = this.notice!;
     return node("section", {
       className: `notice ${notice.kind}`,
-      attrs: { role: notice.kind === "error" ? "alert" : "status" },
-    }, node("strong", { text: notice.title }), node("p", { text: notice.detail }));
-  }
-
-  private renderStatusRegion(): HTMLElement {
-    return node("div", { className: "status-region visually-hidden", attrs: { role: "status", "aria-live": "polite", "aria-atomic": "true" } },
-      this.busy ? "Guardando cambios…" : this.notice?.persistent ? "" : this.notice?.title ?? "",
+      attrs: {
+        role: notice.kind === "error" ? "alert" : "status",
+        ...(notice.kind === "error" ? { tabindex: "-1" } : {}),
+      },
+    },
+    node("span", { className: "notice-icon", text: notice.kind === "success" ? "✓" : "!", attrs: { "aria-hidden": "true" } }),
+    node("div", {}, node("strong", { text: notice.title }), node("p", { text: notice.detail })),
     );
   }
 
-  private masthead(area: string): HTMLElement {
-    const snapshot = this.snapshot!;
-    return node("header", { className: "masthead" },
-      node("p", { className: "eyebrow", text: area.toUpperCase() }),
-      node("h1", { text: snapshot.module.title, attrs: { tabindex: "-1" } }),
-      node("p", { text: `${snapshot.module.subject} · ${snapshot.questions.length} preguntas · contenido ${snapshot.module.contentRevision}` }),
+  private syncAppChrome(): void {
+    const refs = this.shellRefs;
+    const snapshot = this.snapshot;
+    if (!refs || !snapshot) return;
+    refs.moduleTitle.textContent = snapshot.module.title;
+    refs.moduleMeta.textContent = `${snapshot.module.subject} · ${snapshot.questions.length} preguntas`;
+
+    const activeView = this.view === "results" || this.view === "exam" ? "study" : this.view;
+    for (const [view, link] of refs.navLinks) {
+      if (activeView === view) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    }
+
+    const state = this.busy ? "busy" : this.stale ? "stale" : this.volatile ? "volatile" : "saved";
+    const label = this.busy ? "Guardando…" : this.stale ? "Solo lectura" : this.volatile ? "Solo en memoria" : "Guardado local";
+    refs.saveStatus.className = `save-status ${state}`;
+    refs.saveStatus.replaceChildren(
+      node("span", { className: "status-dot", attrs: { "aria-hidden": "true" } }),
+      node("span", {}, node("strong", { text: label }), node("small", { text: `Estado ${snapshot.progress.stateRevision}` })),
+    );
+    refs.liveRegion.textContent = this.busy ? "Guardando cambios" : "";
+    this.syncNotice();
+  }
+
+  private syncNotice(): void {
+    const refs = this.shellRefs;
+    if (!refs) return;
+    const notice = this.notice;
+    const key = notice ? `${notice.kind}|${notice.persistent ? "1" : "0"}|${notice.title}|${notice.detail}` : "";
+    if (key === this.shownNoticeKey) return;
+    this.shownNoticeKey = key;
+    if (this.snackbarTimer !== null) window.clearTimeout(this.snackbarTimer);
+    this.snackbarTimer = null;
+    refs.bannerSlot.replaceChildren();
+    refs.snackbar.replaceChildren();
+    refs.snackbar.removeAttribute("data-visible");
+    if (!notice) return;
+    if (notice.persistent) {
+      refs.bannerSlot.append(this.renderNotice());
+      return;
+    }
+    refs.snackbar.className = `snackbar ${notice.kind}`;
+    refs.snackbar.append(node("strong", { text: notice.title }), node("span", { text: notice.detail }));
+    refs.snackbar.dataset.visible = "true";
+    this.snackbarTimer = window.setTimeout(() => {
+      if (this.shownNoticeKey !== key) return;
+      refs.snackbar.removeAttribute("data-visible");
+      this.notice = null;
+      this.shownNoticeKey = "";
+    }, 4800);
+  }
+
+  private renderRoute(): HTMLElement {
+    if (this.view === "progress") return this.renderProgress();
+    if (this.view === "module") return this.renderModule();
+    if (this.view === "results") return this.renderResults();
+    if (this.view === "exam") return this.renderFocusedExam();
+    if (this.view === "recoveries") return this.renderRecoveriesRoute();
+    return this.renderStudy();
+  }
+
+  private syncCurrentRoute(): void {
+    if (this.view === "exam") this.syncExamRoute();
+    else if (this.view === "study") this.syncStudyRoute();
+  }
+
+  private pageHeader(title: string, description: string, eyebrow?: string): HTMLElement {
+    return node("header", { className: "page-header" },
+      eyebrow ? node("p", { className: "eyebrow", text: eyebrow }) : null,
+      node("h1", { className: "route-title", text: title, attrs: { tabindex: "-1" } }),
+      node("p", { className: "page-intro", text: description }),
+    );
+  }
+
+  private renderRecoveryList(): HTMLElement {
+    const list = node("ul", { className: "recovery-list" });
+    for (const recovery of this.recoveries) {
+      const title = recovery.title || recovery.subject || recovery.key;
+      const actions = node("div", { className: "button-row compact" });
+      if (!recovery.corrupt) {
+        actions.append(
+          button("Abrir", "primary", () => this.openRecovery(recovery.key)),
+          button("Exportar…", "secondary", () => this.exportRecovery(recovery.key)),
+        );
+      }
+      actions.append(button("Eliminar…", "danger", () => this.deleteRecovery(recovery)));
+      list.append(node("li", { className: "recovery-item" },
+        node("div", { className: "recovery-copy" },
+          node("h2", { text: title }),
+          node("p", { text: recovery.corrupt
+            ? `Copia dañada: ${recovery.error || "no se pudo validar"}`
+            : `Contenido ${recovery.contentRevision ?? "—"} · estado ${recovery.stateRevision ?? "—"} · ${formatDate(recovery.updatedAt)}` }),
+        ),
+        actions,
+      ));
+    }
+    return list;
+  }
+
+  private renderRecoveriesRoute(): HTMLElement {
+    return node("div", { className: "route-panel" },
+      this.pageHeader("Recuperaciones", "Abrí, exportá o eliminá una copia guardada en este navegador."),
+      this.renderRecoveryList(),
+      this.importControl("Cargar otro módulo"),
     );
   }
 
   private renderStudy(): HTMLElement {
     const snapshot = this.snapshot!;
-    const wrapper = node("div", {}, this.masthead("Estudiar"));
+    const wrapper = node("div", { className: "route-panel study-route" },
+      this.pageHeader("Estudiar", "Elegí cómo practicar. El banco no repite preguntas nuevas en silencio.", "PRÁCTICA"),
+    );
     if (snapshot.progress.activeRun) {
       const run = snapshot.progress.activeRun;
       const answered = runAnsweredCount(run);
-      wrapper.append(node("section", { className: "section reading" },
-        node("h2", { text: "Tenés un examen en curso" }),
-        node("p", { text: `${answered} de ${run.items.length} respuestas registradas · ${difficultyLabel(run.filters.difficulty)} · ${run.filters.population === "nuevas" ? "Solo nuevas" : "Todas"}.` }),
+      wrapper.append(node("section", { className: "resume-panel" },
+        this.renderPercentRing((answered / run.items.length) * 100, "respondido", `${answered}/${run.items.length}`, "compact"),
+        node("div", { className: "resume-copy" },
+          node("p", { className: "eyebrow", text: "EXAMEN EN CURSO" }),
+          node("h2", { text: "Seguí donde lo dejaste" }),
+          node("p", { text: `${answered} de ${run.items.length} respuestas · ${difficultyLabel(run.filters.difficulty)} · ${run.filters.population === "nuevas" ? "Solo nuevas" : "Todas"}.` }),
+        ),
         node("div", { className: "button-row" },
           button("Reanudar examen", "primary", () => this.setView("exam")),
           button("Abandonar…", "danger", () => this.abandonRun()),
@@ -381,20 +604,35 @@ class Application {
     }
 
     const metrics = deriveMetrics(snapshot);
-    const progress = node("progress", { attrs: { max: "100", value: String(metrics.coveragePercent), "aria-label": "Cobertura evaluada" } });
-    wrapper.append(node("section", { className: "section reading" },
-      node("h2", { text: "Tu banco, de un vistazo" }),
-      node("div", { className: "coverage-ledger" },
-        node("div", { className: "number", text: percent(metrics.coveragePercent) }),
-        node("div", {}, node("div", { className: "label", text: "evaluado" }), node("div", { className: "fraction", text: `${metrics.evaluatedQuestions} de ${metrics.totalQuestions} preguntas` })),
-        progress,
+    wrapper.append(node("section", { className: "overview-grid", attrs: { "aria-label": "Resumen de progreso" } },
+      node("article", { className: "coverage-card" },
+        this.renderPercentRing(metrics.coveragePercent, "evaluado", `${metrics.evaluatedQuestions}/${metrics.totalQuestions}`),
+        node("div", { className: "coverage-copy" },
+          node("p", { className: "eyebrow", text: "COBERTURA TOTAL" }),
+          node("h2", { text: metrics.evaluatedQuestions ? "Tu banco ya está en movimiento" : "Todo listo para empezar" }),
+          node("p", { text: `${metrics.evaluatedQuestions} de ${metrics.totalQuestions} preguntas evaluadas al menos una vez.` }),
+          button("Ver progreso", "text-button", () => this.setView("progress")),
+        ),
       ),
-      node("p", { text: "Cobertura muestra cuánto recorriste. Precisión y dominio se calculan por separado." }),
+      node("div", { className: "metric-card-grid" },
+        this.renderMetricCard(
+          "Precisión",
+          metrics.accuracyPercent === null ? "—" : percent(metrics.accuracyPercent),
+          metrics.accuracyPercent === null ? "Todavía no hay intentos" : `${metrics.correctCount} de ${metrics.attemptCount} intentos correctos`,
+          "primary",
+        ),
+        this.renderMetricCard(
+          "Último resultado correcto",
+          percent(metrics.masteryPercent),
+          `${metrics.masteredQuestions} preguntas con último intento correcto`,
+          "success",
+        ),
+      ),
     ));
 
     const difficultySelect = node("select", {
       attrs: { id: "difficulty" },
-      on: { change: (event) => { this.difficulty = (event.currentTarget as HTMLSelectElement).value as DifficultyFilter; this.render(); } },
+      on: { change: (event) => { this.difficulty = (event.currentTarget as HTMLSelectElement).value as DifficultyFilter; this.syncStudyRoute(); } },
     });
     for (const value of ["mixta", ...DIFFICULTIES] as DifficultyFilter[]) {
       const option = node("option", { text: difficultyLabel(value), attrs: { value } });
@@ -403,7 +641,7 @@ class Application {
     }
     const populationSelect = node("select", {
       attrs: { id: "population" },
-      on: { change: (event) => { this.population = (event.currentTarget as HTMLSelectElement).value as Population; this.render(); } },
+      on: { change: (event) => { this.population = (event.currentTarget as HTMLSelectElement).value as Population; this.syncStudyRoute(); } },
     });
     for (const [value, label] of [["nuevas", "Solo nuevas"], ["todas", "Todas: nuevas y evaluadas"]] as Array<[Population, string]>) {
       const option = node("option", { text: label, attrs: { value } });
@@ -414,22 +652,73 @@ class Application {
     const startButton = button(
       this.busy ? "Preparando y guardando…" : "Comenzar examen de 10 preguntas",
       "primary",
-      () => this.startRun(eligible),
+      () => this.startRun(countEligible(this.snapshot!, this.difficulty, this.population)),
     );
+    startButton.dataset.action = "start-exam";
     startButton.disabled = this.busy || this.stale;
-    wrapper.append(node("section", { className: "section reading" },
-      node("h2", { text: "Prepará un examen modelo" }),
-      node("p", { text: "Vas a recibir hasta 10 preguntas únicas. Las respuestas se corrigen al entregar." }),
+    wrapper.append(node("section", { className: "setup-panel" },
+      node("div", { className: "section-heading" },
+        node("div", {}, node("p", { className: "eyebrow", text: "NUEVO RUN" }), node("h2", { text: "Prepará un examen modelo" })),
+        node("span", { className: "question-count-chip", text: "10 preguntas" }),
+      ),
       node("div", { className: "exam-setup" },
         node("div", { className: "field" }, node("label", { text: "Dificultad", attrs: { for: "difficulty" } }), difficultySelect),
         node("div", { className: "field" }, node("label", { text: "Banco de preguntas", attrs: { for: "population" } }), populationSelect),
         node("div", { className: "start" },
           startButton,
-          node("p", { className: "eligible", attrs: { role: "status", "aria-live": "polite" }, text: `Disponibles con estos filtros: ${eligible}` }),
+          node("p", { className: "eligible", data: { role: "eligible" }, attrs: { role: "status", "aria-live": "polite" }, text: `${eligible} disponibles con estos filtros` }),
         ),
       ),
     ));
     return wrapper;
+  }
+
+  private syncStudyRoute(): void {
+    const outlet = this.shellRefs?.outlet;
+    const snapshot = this.snapshot;
+    if (!outlet || !snapshot || snapshot.progress.activeRun) return;
+    const eligible = countEligible(snapshot, this.difficulty, this.population);
+    const copy = outlet.querySelector<HTMLElement>("[data-role=eligible]");
+    if (copy) copy.textContent = `${eligible} disponibles con estos filtros`;
+    const startButton = outlet.querySelector<HTMLButtonElement>("[data-action=start-exam]");
+    if (startButton) {
+      startButton.disabled = this.busy || this.stale;
+      startButton.textContent = this.busy ? "Preparando y guardando…" : "Comenzar examen de 10 preguntas";
+    }
+  }
+
+  private renderMetricCard(label: string, value: string, detail: string, tone: "primary" | "success" | "neutral" = "neutral"): HTMLElement {
+    return node("article", { className: `metric-card ${tone}` },
+      node("span", { className: "metric-label", text: label }),
+      node("strong", { className: "metric-value", text: value }),
+      node("span", { className: "metric-detail", text: detail }),
+    );
+  }
+
+  private renderPercentRing(value: number, label: string, detail: string, modifier = ""): HTMLElement {
+    const safeValue = clampPercent(value);
+    const titleId = `ring-title-${++svgSerial}`;
+    const chart = svgNode("svg", {
+      className: "ring-chart",
+      attrs: { viewBox: "0 0 120 120", role: "img", "aria-labelledby": titleId },
+    },
+    svgNode("title", { attrs: { id: titleId }, text: `${label}: ${percent(safeValue)}` }),
+    svgNode("circle", { className: "ring-track", attrs: { cx: "60", cy: "60", r: "48", pathLength: "100" } }),
+    svgNode("circle", {
+      className: "ring-value",
+      attrs: {
+        cx: "60", cy: "60", r: "48", pathLength: "100",
+        "stroke-dasharray": `${safeValue} ${100 - safeValue}`,
+      },
+    }),
+    );
+    return node("div", { className: `percent-ring ${modifier}`.trim() }, chart,
+      node("div", { className: "ring-label" },
+        node("strong", { text: percent(safeValue) }),
+        node("span", { text: label }),
+        node("small", { text: detail }),
+      ),
+    );
   }
 
   private renderFocusedExam(): HTMLElement {
@@ -437,19 +726,51 @@ class Application {
     const run = snapshot?.progress.activeRun;
     if (!snapshot || !run) {
       this.view = "study";
-      return this.renderShell();
+      return this.renderStudy();
     }
+    const answered = runAnsweredCount(run);
+    const route = node("div", { className: "route-panel exam-route" },
+      node("header", { className: "exam-header" },
+        node("div", {},
+          node("p", { className: "eyebrow", text: "EXAMEN EN CURSO" }),
+          node("strong", { className: "exam-position", data: { role: "exam-position" }, text: `Pregunta ${run.currentIndex + 1} de ${run.items.length}` }),
+        ),
+        node("span", { className: "answered-chip", data: { role: "answered-count" }, text: `${answered}/${run.items.length} respondidas` }),
+      ),
+      node("progress", { className: "exam-progress", data: { role: "exam-progress" }, attrs: { max: String(run.items.length), value: String(answered), "aria-label": "Preguntas respondidas" } }),
+    );
+    const stage = node("section", { className: "question-stage", data: { questionId: run.items[run.currentIndex]!.questionId } }, this.renderQuestionStage());
+    const previousButton = button("Anterior", "secondary", () => this.navigate(run.currentIndex - 1));
+    previousButton.dataset.action = "previous-question";
+    const nextButton = button("Siguiente", "secondary", () => this.navigate(run.currentIndex + 1));
+    nextButton.dataset.action = "next-question";
+    const submitButton = button(this.busy ? "Guardando…" : "Entregar examen", "primary", () => this.submitRun());
+    submitButton.dataset.action = "submit-exam";
+    const bounds = navigationBounds(run.currentIndex, run.items.length);
+    previousButton.disabled = bounds.previousDisabled || this.busy || this.stale;
+    nextButton.disabled = bounds.nextDisabled || this.busy || this.stale;
+    submitButton.disabled = this.busy || this.stale;
+    route.append(stage, this.renderQuestionRail(), node("footer", { className: "exam-actions" },
+      node("div", { className: "button-row exam-navigation" }, previousButton, nextButton),
+      node("div", { className: "button-row exam-submit" },
+        button("Guardar y salir", "text-button", () => this.setView("study")),
+        submitButton,
+      ),
+    ));
+    return route;
+  }
+
+  private renderQuestionStage(): HTMLElement {
+    const snapshot = this.snapshot!;
+    const run = snapshot.progress.activeRun!;
     const item = run.items[run.currentIndex]!;
     const question = findQuestion(snapshot, item.questionId);
-    const main = node("main", { className: "main focused-main", attrs: { id: "main-content" } });
-    const shell = node("div", { className: "question-shell view-enter" });
-    if (this.notice?.persistent) shell.append(this.renderNotice());
-    shell.append(
+    const shell = node("div", { className: "question-card" },
       node("div", { className: "question-topline" },
-        node("span", { text: `Pregunta ${run.currentIndex + 1} de ${run.items.length}` }),
         node("span", { className: `difficulty ${question.difficulty}`, text: difficultyLabel(question.difficulty) }),
+        node("span", { className: "topic-chip", text: question.topic }),
       ),
-      node("h1", { className: "question-prompt", text: question.prompt, attrs: { tabindex: "-1" } }),
+      node("h1", { className: "question-prompt route-title", text: question.prompt, attrs: { tabindex: "-1" } }),
     );
     const fieldset = node("fieldset", { className: "answers" });
     fieldset.append(node("legend", { className: "visually-hidden", text: `Respuesta para la pregunta ${run.currentIndex + 1}` }));
@@ -461,6 +782,7 @@ class Application {
         on: { change: () => this.answer({ kind: "option", optionId: option.id }) },
       });
       input.checked = item.answer?.kind === "option" && item.answer.optionId === option.id;
+      input.disabled = this.stale;
       fieldset.append(node("label", { className: "answer" }, input, node("span", { text: option.text })));
     }
     const dontKnow = node("input", {
@@ -468,17 +790,10 @@ class Application {
       on: { change: () => this.answer({ kind: "dontKnow" }) },
     });
     dontKnow.checked = item.answer?.kind === "dontKnow";
+    dontKnow.disabled = this.stale;
     fieldset.append(node("label", { className: "answer" }, dontKnow, node("span", { text: "No sé" })));
-    const submitButton = button(this.busy ? "Guardando…" : "Entregar examen", "primary", () => this.submitRun());
-    submitButton.disabled = this.busy || this.stale;
-    shell.append(fieldset, this.renderQuestionRail(), node("div", { className: "button-row" },
-      button("Anterior", "secondary", () => this.navigate(Math.max(0, run.currentIndex - 1))),
-      button("Siguiente", "secondary", () => this.navigate(Math.min(run.items.length - 1, run.currentIndex + 1))),
-      button("Guardar y salir", "quiet", () => this.setView("study")),
-      submitButton,
-    ));
-    main.append(shell, this.renderStatusRegion());
-    return main;
+    shell.append(fieldset);
+    return shell;
   }
 
   private renderQuestionRail(): HTMLElement {
@@ -515,57 +830,182 @@ class Application {
     return rail;
   }
 
+  private syncExamRoute(): void {
+    const outlet = this.shellRefs?.outlet;
+    const snapshot = this.snapshot;
+    const run = snapshot?.progress.activeRun;
+    if (!outlet || !snapshot || !run) return;
+    const item = run.items[run.currentIndex]!;
+    const stage = outlet.querySelector<HTMLElement>(".question-stage");
+    if (stage && stage.dataset.questionId !== item.questionId) {
+      stage.dataset.questionId = item.questionId;
+      stage.replaceChildren(this.renderQuestionStage());
+    }
+    const answered = runAnsweredCount(run);
+    const position = outlet.querySelector<HTMLElement>("[data-role=exam-position]");
+    const answeredCopy = outlet.querySelector<HTMLElement>("[data-role=answered-count]");
+    const progress = outlet.querySelector<HTMLProgressElement>("[data-role=exam-progress]");
+    if (position) position.textContent = `Pregunta ${run.currentIndex + 1} de ${run.items.length}`;
+    if (answeredCopy) answeredCopy.textContent = `${answered}/${run.items.length} respondidas`;
+    if (progress) progress.value = answered;
+    const railButtons = outlet.querySelectorAll<HTMLButtonElement>(".question-rail button");
+    run.items.forEach((runItem, index) => {
+      const railButton = railButtons.item(index);
+      if (!railButton) return;
+      const current = index === run.currentIndex;
+      railButton.dataset.answered = String(Boolean(runItem.answer));
+      railButton.tabIndex = current ? 0 : -1;
+      railButton.setAttribute("aria-label", `Pregunta ${index + 1}, ${runItem.answer ? "respondida" : "sin responder"}${current ? ", actual" : ""}`);
+      if (current) railButton.setAttribute("aria-current", "step");
+      else railButton.removeAttribute("aria-current");
+      railButton.disabled = this.busy || this.stale;
+    });
+    const bounds = navigationBounds(run.currentIndex, run.items.length);
+    const previous = outlet.querySelector<HTMLButtonElement>("[data-action=previous-question]");
+    const next = outlet.querySelector<HTMLButtonElement>("[data-action=next-question]");
+    const submit = outlet.querySelector<HTMLButtonElement>("[data-action=submit-exam]");
+    if (previous) previous.disabled = bounds.previousDisabled || this.busy || this.stale;
+    if (next) next.disabled = bounds.nextDisabled || this.busy || this.stale;
+    if (submit) {
+      submit.disabled = this.busy || this.stale;
+      submit.textContent = this.busy ? "Guardando…" : "Entregar examen";
+    }
+    const currentInputs = stage?.querySelectorAll<HTMLInputElement>("input[name=answer]") ?? [];
+    for (const input of currentInputs) {
+      input.disabled = this.stale;
+      if (!this.busy) {
+        input.checked = item.answer?.kind === "dontKnow"
+          ? input.value === "dontKnow"
+          : item.answer?.kind === "option" && input.value === item.answer.optionId;
+      }
+    }
+  }
+
   private renderProgress(): HTMLElement {
     const snapshot = this.snapshot!;
     const metrics = deriveMetrics(snapshot);
-    const wrapper = node("div", {}, this.masthead("Progreso"));
-    const ledger = node("div", { className: "metric-ledger" });
-    const entries: Array<[string, string, string]> = [
-      ["Cobertura", percent(metrics.coveragePercent), `${metrics.evaluatedQuestions} de ${metrics.totalQuestions} preguntas`],
-      ["Precisión", metrics.accuracyPercent === null ? "Sin intentos" : percent(metrics.accuracyPercent), `${metrics.correctCount} correctas de ${metrics.attemptCount} intentos`],
-      ["Dominio", percent(metrics.masteryPercent), `${metrics.masteredQuestions} con último resultado correcto`],
-      ["Exámenes", String(snapshot.progress.priorRunSummary.runCount + snapshot.progress.runs.length), `${snapshot.progress.runs.length} con detalle disponible`],
-    ];
-    for (const [label, value, detail] of entries) ledger.append(node("div", { className: "metric-row" }, node("b", { text: label }), node("strong", { text: value }), node("span", { text: detail })));
-    wrapper.append(node("section", { className: "section" }, node("h2", { text: "Resumen" }), ledger));
-
-    const breakdown = node("div", { className: "metric-ledger" });
-    for (const level of DIFFICULTIES) {
-      const value = metrics.byDifficulty[level];
-      breakdown.append(node("div", { className: "metric-row" },
-        node("span", { className: `difficulty ${level}`, text: difficultyLabel(level) }),
-        node("strong", { text: percent(value.coveragePercent) }),
-        node("span", { text: `${value.evaluated}/${value.total} evaluadas · ${value.accuracyPercent === null ? "Sin intentos" : `${percent(value.accuracyPercent)} precisión`}` }),
-      ));
-    }
-    wrapper.append(node("section", { className: "section" }, node("h2", { text: "Por dificultad" }), breakdown));
+    const runCount = snapshot.progress.priorRunSummary.runCount + snapshot.progress.runs.length;
+    const wrapper = node("div", { className: "route-panel progress-route" },
+      this.pageHeader("Progreso", "Cobertura, precisión y evolución se muestran por separado para que cada señal sea clara.", "ANÁLISIS"),
+      node("section", { className: "progress-summary", attrs: { "aria-label": "Resumen general" } },
+        node("article", { className: "coverage-card compact-card" },
+          this.renderPercentRing(metrics.coveragePercent, "evaluado", `${metrics.evaluatedQuestions}/${metrics.totalQuestions}`),
+          node("div", { className: "coverage-copy" }, node("h2", { text: "Cobertura" }), node("p", { text: `${metrics.evaluatedQuestions} preguntas vistas de ${metrics.totalQuestions}.` })),
+        ),
+        this.renderMetricCard("Precisión", metrics.accuracyPercent === null ? "—" : percent(metrics.accuracyPercent), metrics.accuracyPercent === null ? "Sin intentos todavía" : `${metrics.correctCount} correctas de ${metrics.attemptCount}`, "primary"),
+        this.renderMetricCard("Último resultado correcto", percent(metrics.masteryPercent), `${metrics.masteredQuestions} de ${metrics.totalQuestions} preguntas`, "success"),
+        this.renderMetricCard("Exámenes", String(runCount), `${snapshot.progress.runs.length} con detalle disponible`, "neutral"),
+      ),
+      node("section", { className: "chart-card" },
+        node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "COBERTURA" }), node("h2", { text: "Por dificultad" }))),
+        this.renderDifficultyBars(),
+      ),
+      this.renderRunTrendChart(),
+    );
 
     const history = node("ol", { className: "history-list" });
     const runs = [...snapshot.progress.runs].reverse().slice(0, 25);
     if (!runs.length) {
-      wrapper.append(node("section", { className: "section" }, node("h2", { text: "Historial" }), node("p", { text: "Tu primer resultado aparecerá acá." }), button("Ir a Estudiar", "primary", () => this.setView("study"))));
+      wrapper.append(node("section", { className: "empty-state" }, node("h2", { text: "Tu historial empieza con el primer examen" }), node("p", { text: "Cuando entregues un run, vas a ver su resultado y el avance de cobertura." }), button("Ir a Estudiar", "primary", () => this.setView("study"))));
       return wrapper;
     }
     for (const run of runs) history.append(node("li", { className: "history-item" },
-      node("strong", { text: `${run.correctCount}/${run.items.length} correctas` }),
-      node("div", { text: `${difficultyLabel(run.filters.difficulty)} · ${formatDate(run.submittedAt)} · cobertura ${run.coverageBeforeCount} → ${run.coverageAfterCount}` }),
+      node("span", { className: "history-score", text: `${run.correctCount}/${run.items.length}` }),
+      node("div", { className: "history-copy" },
+        node("strong", { text: `${percent(scorePercent(run.correctCount, run.items.length))} de precisión` }),
+        node("span", { text: `${difficultyLabel(run.filters.difficulty)} · ${formatDate(run.submittedAt)}` }),
+      ),
+      node("span", { className: "coverage-gain", text: `+${run.coverageAfterCount - run.coverageBeforeCount} nuevas` }),
     ));
-    wrapper.append(node("section", { className: "section" }, node("h2", { text: "Historial reciente" }), history,
+    wrapper.append(node("section", { className: "history-section" },
+      node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "ACTIVIDAD" }), node("h2", { text: "Historial reciente" }))),
+      history,
       snapshot.progress.priorRunSummary.runCount ? node("p", { text: `${snapshot.progress.priorRunSummary.runCount} exámenes anteriores están resumidos para mantener el archivo liviano.` }) : null,
     ));
     return wrapper;
   }
 
+  private renderDifficultyBars(): HTMLElement {
+    const metrics = deriveMetrics(this.snapshot!);
+    const list = node("div", { className: "difficulty-bars" });
+    for (const level of DIFFICULTIES) {
+      const value = metrics.byDifficulty[level];
+      list.append(node("div", { className: `difficulty-bar ${level}` },
+        node("div", { className: "difficulty-bar-label" },
+          node("span", { className: `difficulty ${level}`, text: difficultyLabel(level) }),
+          node("strong", { text: percent(value.coveragePercent) }),
+        ),
+        node("progress", { attrs: { max: "100", value: String(value.coveragePercent), "aria-label": `Cobertura ${difficultyLabel(level)}` } }),
+        node("div", { className: "difficulty-bar-detail" },
+          node("span", { text: `${value.evaluated}/${value.total} evaluadas` }),
+          node("span", { text: value.accuracyPercent === null ? "Sin intentos" : `${percent(value.accuracyPercent)} precisión` }),
+        ),
+      ));
+    }
+    return list;
+  }
+
+  private renderRunTrendChart(): HTMLElement {
+    const trend = buildRunTrend(this.snapshot!);
+    const section = node("section", { className: "chart-card run-trend" },
+      node("div", { className: "section-heading" },
+        node("div", {}, node("p", { className: "eyebrow", text: "EVOLUCIÓN" }), node("h2", { text: "Últimos exámenes" })),
+        node("div", { className: "chart-legend", attrs: { "aria-label": "Leyenda" } },
+          node("span", { className: "legend-accuracy", text: "Precisión" }),
+          node("span", { className: "legend-coverage", text: "Cobertura" }),
+        ),
+      ),
+    );
+    if (!trend.length) {
+      section.append(node("div", { className: "empty-chart" }, node("strong", { text: "Sin runs todavía" }), node("span", { text: "La tendencia aparece después del primer examen." })));
+      return section;
+    }
+
+    const left = 46;
+    const right = 616;
+    const top = 20;
+    const bottom = 188;
+    const height = bottom - top;
+    const xFor = (index: number): number => trend.length === 1 ? (left + right) / 2 : left + (index / (trend.length - 1)) * (right - left);
+    const yFor = (value: number): number => bottom - (clampPercent(value) / 100) * height;
+    const svg = svgNode("svg", { className: "run-chart", attrs: { viewBox: "0 0 640 225", "aria-hidden": "true", focusable: "false" } });
+    for (const tick of [0, 50, 100]) {
+      const y = yFor(tick);
+      svg.append(
+        svgNode("line", { className: "chart-grid-line", attrs: { x1: String(left), y1: String(y), x2: String(right), y2: String(y) } }),
+        svgNode("text", { className: "chart-axis-label", attrs: { x: "8", y: String(y + 4) }, text: `${tick}%` }),
+      );
+    }
+    trend.forEach((point, index) => {
+      const x = xFor(index);
+      const y = yFor(point.accuracyPercent);
+      svg.append(
+        svgNode("rect", { className: "accuracy-bar", attrs: { x: String(x - 9), y: String(y), width: "18", height: String(bottom - y), rx: "5" } }),
+        svgNode("text", { className: "chart-run-label", attrs: { x: String(x), y: "213", "text-anchor": "middle" }, text: String(point.runNumber) }),
+      );
+    });
+    const coveragePoints = trend.map((point, index) => `${xFor(index)},${yFor(point.coveragePercent)}`).join(" ");
+    svg.append(svgNode("polyline", { className: "coverage-line", attrs: { points: coveragePoints } }));
+    trend.forEach((point, index) => svg.append(svgNode("circle", { className: "coverage-point", attrs: { cx: String(xFor(index)), cy: String(yFor(point.coveragePercent)), r: "4" } })));
+
+    const accessible = node("ol", { className: "visually-hidden" });
+    for (const point of trend) accessible.append(node("li", { text: `Examen ${point.runNumber}: ${percent(point.accuracyPercent)} de precisión y ${percent(point.coveragePercent)} de cobertura.` }));
+    section.append(svg, accessible, node("p", { className: "chart-caption", text: "Las barras muestran precisión. La línea muestra cuánto del banco ya habías evaluado al terminar cada examen." }));
+    return section;
+  }
+
   private renderModule(): HTMLElement {
     const snapshot = this.snapshot!;
-    const wrapper = node("div", {}, this.masthead("Módulo"));
-    wrapper.append(node("section", { className: "section reading" },
+    const wrapper = node("div", { className: "route-panel module-route" },
+      this.pageHeader("Módulo", "Guardá una copia portable o revisá cómo está identificado este banco.", "ARCHIVO"),
+    );
+    wrapper.append(node("section", { className: "surface-panel primary-panel" },
       node("h2", { text: "Protegé tu progreso" }),
       node("p", { text: "La recuperación del navegador ayuda en este dispositivo. El archivo exportado es la copia portable entre sesiones, ubicaciones y dispositivos." }),
       node("div", { className: "button-row" }, button("Guardar archivo…", "primary", () => this.exportSnapshot()), this.importControl("Cargar o reemplazar…")),
     ));
     if (this.volatile || this.stale) {
-      wrapper.append(node("section", { className: "section reading" },
+      wrapper.append(node("section", { className: "surface-panel warning-panel" },
         node("h2", { text: this.stale ? "Esta pestaña está desactualizada" : "Cambios pendientes de recuperación local" }),
         node("p", { text: this.stale ? "Exportá esta copia como rescate o recargá lo guardado por la otra pestaña." : "Podés reintentar si la base guardada no cambió, exportar, o descartar los cambios en memoria." }),
         node("div", { className: "button-row" },
@@ -584,8 +1024,8 @@ class Application {
       ["Actualizado", formatDate(snapshot.progress.updatedAt)],
       ["Recuperación local", this.repository.isPersistent && !this.volatile ? "Disponible" : "No confirmada"],
     ]) facts.append(node("dt", { text: term }), node("dd", { text: value }));
-    wrapper.append(node("section", { className: "section reading" }, node("h2", { text: "Identidad y estado" }), facts));
-    wrapper.append(node("section", { className: "section reading" },
+    wrapper.append(node("section", { className: "surface-panel" }, node("h2", { text: "Identidad y estado" }), facts));
+    wrapper.append(node("section", { className: "surface-panel" },
       node("h2", { text: "Recuperaciones de este navegador" }),
       node("p", { text: "Podés volver al selector para abrir, exportar o eliminar otra copia. El módulo actual no se modifica." }),
       button("Ver recuperaciones", "secondary", async () => { this.recoveries = (await this.repository.listRecoveries()) as RecoveryLike[]; this.setView("recoveries"); }),
@@ -595,14 +1035,31 @@ class Application {
 
   private renderResults(): HTMLElement {
     const snapshot = this.snapshot!;
-    const run = this.resultRun ?? snapshot.progress.runs.at(-1) ?? null;
-    const wrapper = node("div", {}, this.masthead("Resultados"));
+    const rememberedRun = this.resultRun && completedRunBelongsToSnapshot(snapshot, this.resultRun)
+      ? this.resultRun
+      : null;
+    if (!rememberedRun) this.resultRun = null;
+    const run = rememberedRun ?? snapshot.progress.runs.at(-1) ?? null;
+    const wrapper = node("div", { className: "route-panel results-route" },
+      this.pageHeader("Resultados", "Revisá qué salió bien y qué conviene practicar otra vez.", "RUN COMPLETADO"),
+    );
     if (!run) return node("div", {}, wrapper, node("p", { text: "No hay un resultado reciente para mostrar." }));
     const coverageGain = run.coverageAfterCount - run.coverageBeforeCount;
-    wrapper.append(node("section", { className: "section reading" },
-      node("h2", { text: `${run.correctCount} de ${run.items.length} correctas` }),
-      node("p", { text: `Cobertura ganada: ${coverageGain} ${coverageGain === 1 ? "pregunta" : "preguntas"}. Las respuestas incorrectas son una guía para la próxima práctica.` }),
-      node("div", { className: "button-row" }, button("Nuevo examen", "primary", () => this.setView("study")), button("Ver Progreso", "secondary", () => this.setView("progress"))),
+    wrapper.append(node("section", { className: "result-hero" },
+      this.renderPercentRing(scorePercent(run.correctCount, run.items.length), "precisión", `${run.correctCount}/${run.items.length}`, "score-ring"),
+      node("div", { className: "result-copy" },
+        node("p", { className: "eyebrow", text: "RESULTADO" }),
+        node("h2", { text: `${run.correctCount} de ${run.items.length} correctas` }),
+        node("p", { text: coverageGain
+          ? `Sumaste ${coverageGain} ${coverageGain === 1 ? "pregunta nueva" : "preguntas nuevas"} a tu cobertura.`
+          : "Este run reforzó preguntas que ya habías evaluado." }),
+        node("div", { className: "result-stats" },
+          node("span", { className: "success-chip", text: `${run.correctCount} correctas` }),
+          node("span", { className: "error-chip", text: `${run.incorrectCount} incorrectas` }),
+          node("span", { className: "coverage-chip", text: `+${coverageGain} cobertura` }),
+        ),
+        node("div", { className: "button-row" }, button("Nuevo examen", "primary", () => this.setView("study")), button("Ver progreso", "secondary", () => this.setView("progress"))),
+      ),
     ));
     const list = node("ol", { className: "result-list" });
     for (const item of run.items) {
@@ -612,15 +1069,18 @@ class Application {
       const correct = question.options.find((option) => option.id === question.correctOptionId)?.text ?? question.correctOptionId;
       const isCorrect = selectedId === question.correctOptionId;
       list.append(node("li", { className: "result-item", data: { result: isCorrect ? "correct" : "incorrect" } },
-        node("h3", { text: question.prompt }),
+        node("div", { className: "result-item-heading" }, node("span", { className: "result-marker", text: isCorrect ? "✓" : "×", attrs: { "aria-hidden": "true" } }), node("h3", { text: question.prompt })),
         node("p", { className: "result-answer", text: `Tu respuesta: ${selected}` }),
         node("p", { className: "result-answer", text: `Respuesta correcta: ${correct}` }),
-        node("strong", { text: isCorrect ? "Correcta" : "Incorrecta" }),
+        node("strong", { className: "result-verdict", text: isCorrect ? "Correcta" : "Incorrecta" }),
         node("p", { className: "explanation", text: question.explanation }),
         question.source ? node("p", { text: `Fuente: ${question.source.label}${question.source.reference ? ` · ${question.source.reference}` : ""}` }) : null,
       ));
     }
-    wrapper.append(node("section", { className: "section" }, node("h2", { text: "Revisión pregunta por pregunta" }), list));
+    wrapper.append(node("section", { className: "review-section" },
+      node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "REVISIÓN" }), node("h2", { text: "Pregunta por pregunta" }))),
+      list,
+    ));
     return wrapper;
   }
 
@@ -629,7 +1089,12 @@ class Application {
     const input = node("input", {
       className: "file-input",
       attrs: { id, type: "file", accept: ".json,.study.json,application/json" },
-      on: { change: (event) => void this.importFile((event.currentTarget as HTMLInputElement).files?.[0] ?? null) },
+      on: { change: (event) => {
+        const current = event.currentTarget as HTMLInputElement;
+        const file = current.files?.[0] ?? null;
+        current.value = "";
+        void this.importFile(file);
+      } },
     });
     return node("span", {}, input, node("label", { className: "file-button", text: label, attrs: { for: id } }));
   }
@@ -639,10 +1104,11 @@ class Application {
       const snapshot = await this.store.load(key);
       if (!snapshot) throw new Error("La recuperación ya no existe.");
       this.snapshot = snapshot;
+      this.resultRun = null;
       this.volatile = this.store.getState().mode === "volatile";
       this.stale = this.store.getState().mode === "stale";
       this.notice = null;
-      this.setView("study");
+      this.setView("study", true, "replace");
     } catch (error) {
       this.notice = { kind: "error", title: "No se pudo abrir esta copia", detail: String(error), persistent: true };
       this.render();
@@ -667,7 +1133,7 @@ class Application {
     } catch (error) {
       this.notice = { kind: "error", title: "No se guardó ningún archivo", detail: String(error), persistent: true };
     }
-    this.render();
+    this.render(true);
   }
 
   private async deleteRecovery(recovery: RecoveryLike): Promise<void> {
@@ -679,7 +1145,7 @@ class Application {
     this.recoveries = (await this.repository.listRecoveries()) as RecoveryLike[];
     this.view = this.recoveries.length ? "recoveries" : "empty";
     this.notice = { kind: "success", title: "Recuperación eliminada", detail: "Los archivos exportados no se modificaron." };
-    this.render();
+    this.render(true);
   }
 
   private async importFile(file: File | null): Promise<void> {
@@ -710,6 +1176,8 @@ class Application {
       }
       const counts = DIFFICULTIES.map((level) => `${difficultyLabel(level)} ${candidate.questions.filter((q) => q.difficulty === level).length}`).join(" · ");
       const preview = `${candidate.module.title}\n${candidate.module.subject}\n${candidate.questions.length} preguntas · ${counts}\nEstado ${candidate.progress.stateRevision}`;
+      this.notice = null;
+      this.render();
       let choice = await this.ask("Vista previa del módulo", preview, [["cancel", "Cancelar", "secondary"], ["install", this.snapshot ? "Proteger y reemplazar…" : "Cargar módulo", "primary"]]);
       if (choice !== "install") return;
       if (this.snapshot) {
@@ -778,7 +1246,7 @@ class Application {
         eligible === 0 ? "Con estos filtros no quedan preguntas. La aplicación nunca repite ni cambia el filtro en silencio." : `Hay ${eligible} preguntas disponibles. Elegí cómo continuar.`,
         choices,
       );
-      if (choice === "all") { this.population = "todas"; this.render(); return; }
+      if (choice === "all") { this.population = "todas"; this.syncStudyRoute(); return; }
       if (choice !== "short") return;
       acceptedSize = eligible;
     }
@@ -806,13 +1274,14 @@ class Application {
   }
 
   private async navigate(index: number, focusRail = false): Promise<void> {
-    if (!this.snapshot || this.stale) return;
+    const run = this.snapshot?.progress.activeRun;
+    if (!this.snapshot || !run || this.stale || index < 0 || index >= run.items.length) return;
     if (await this.commit((current) => navigateActiveRun(current, index, new Date().toISOString()))) {
       this.view = "exam";
       this.render();
       requestAnimationFrame(() => {
         if (focusRail) this.root.querySelector<HTMLButtonElement>(`.question-rail button:nth-child(${index + 1})`)?.focus();
-        else this.root.querySelector<HTMLElement>("h1")?.focus();
+        else this.shellRefs?.outlet.querySelector<HTMLElement>(".question-prompt")?.focus({ preventScroll: true });
       });
     }
   }
@@ -882,7 +1351,7 @@ class Application {
         this.notice = { kind: "error", title: "El guardado sigue sin estar disponible", detail: String(error), persistent: true };
       }
     }
-    this.render();
+    this.render(true);
   }
 
   private async discardAndReload(): Promise<void> {
@@ -905,7 +1374,7 @@ class Application {
       this.volatile = false;
       this.stale = false;
       this.notice = { kind: "success", title: "Copia local recargada", detail: `Estado ${restored.progress.stateRevision}.` };
-      this.setView(restored.progress.activeRun ? "study" : "module");
+      this.setView(restored.progress.activeRun ? "study" : "module", true, "replace");
     } catch (error) {
       this.notice = { kind: "error", title: "No se pudo recargar la copia local", detail: String(error), persistent: true };
       this.render();
@@ -913,17 +1382,26 @@ class Application {
   }
 
   private ask(title: string, body: string, choices: Array<[string, string, string]>): Promise<string> {
-    const dialog = node("dialog");
-    const heading = node("h2", { text: title, attrs: { tabindex: "-1" } });
+    const serial = ++dialogSerial;
+    const headingId = `dialog-title-${serial}`;
+    const descriptionId = `dialog-description-${serial}`;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = node("dialog", { attrs: { "aria-labelledby": headingId, "aria-describedby": descriptionId } });
+    const heading = node("h2", { text: title, attrs: { id: headingId, tabindex: "-1" } });
     const form = node("form", { attrs: { method: "dialog" } });
-    form.append(heading, node("p", { text: body }));
+    form.append(heading, node("p", { text: body, attrs: { id: descriptionId } }));
     const row = node("div", { className: "button-row" });
     for (const [value, label, className] of choices) row.append(node("button", { className, text: label, attrs: { type: "submit", value } }));
     form.append(row);
     dialog.append(form);
     document.body.append(dialog);
     return new Promise((resolve) => {
-      dialog.addEventListener("close", () => { const value = dialog.returnValue; dialog.remove(); resolve(value); }, { once: true });
+      dialog.addEventListener("close", () => {
+        const value = dialog.returnValue;
+        dialog.remove();
+        if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
+        resolve(value);
+      }, { once: true });
       dialog.addEventListener("cancel", () => { dialog.returnValue = choices[0]?.[0] ?? "cancel"; });
       dialog.showModal();
       requestAnimationFrame(() => (row.querySelector("button") ?? heading).focus());
