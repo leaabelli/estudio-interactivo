@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#F7F9FC">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-GlyLBjJqTK/uf2+R9Y3Y2bq39YjkcPeZ2Crv60cZ8LE='; style-src 'sha256-vMEyBS53yunrgxuNimEmNyYZ9Li9o0798N7VJwt7NZY='; img-src data:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-GlyLBjJqTK/uf2+R9Y3Y2bq39YjkcPeZ2Crv60cZ8LE='; style-src 'sha256-OXX7L0r4VzdmpK8s0ymv+8oaWZyucWf3AOvzt0+dafM='; img-src data:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Estudio Interactivo</title>
   <style>:root {
   --canvas: #f7f9fc;
@@ -296,6 +296,9 @@ p { max-width: 68ch; }
 .notice.warning { color: var(--warning); background: var(--warning-soft); }
 .notice.error { color: var(--danger); background: var(--danger-soft); }
 .notice.success { color: var(--success); background: var(--success-soft); }
+.notice.warning .notice-icon { background: var(--warning); }
+.notice.error .notice-icon { background: var(--danger); }
+.notice.success .notice-icon { background: var(--success); }
 .notice p { margin: 0.2rem 0 0; color: var(--ink); }
 
 .snackbar {
@@ -566,6 +569,7 @@ p { max-width: 68ch; }
 .import-card { align-self: center; padding: clamp(1.5rem, 4vw, 2.25rem); border: 1px solid #d8e0e9; border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-2); }
 .import-illustration { display: grid; width: 4.5rem; height: 4.5rem; place-items: center; margin-bottom: 1.2rem; border-radius: 1.25rem; background: var(--primary-soft); color: var(--primary); font-size: 0.75rem; font-weight: 800; }
 .boot > .eyebrow, .boot > .route-title, .boot > .page-intro, .boot > .recovery-list, .boot > .recovery-list + span, .boot > .notice { grid-column: 1 / -1; }
+.boot-fallback { max-width: 42rem; }
 
 dialog {
   width: min(calc(100% - 2rem), 35rem);
@@ -661,6 +665,7 @@ dialog p { white-space: pre-line; }
   .primary, .file-button { border-color: ButtonText; background: ButtonFace; color: ButtonText; }
   .nav-link[aria-current="page"], .answer:has(input:checked) { border: 2px solid Highlight; background: Canvas; color: CanvasText; }
   .status-dot, .result-marker, .notice-icon { border: 1px solid currentColor; background: Canvas; color: CanvasText; }
+  .notice.warning .notice-icon, .notice.error .notice-icon, .notice.success .notice-icon { border-color: CanvasText; background: Canvas; color: CanvasText; }
   .ring-value, .coverage-line, .coverage-point { stroke: Highlight; }
   .difficulty::before { border-color: currentColor; }
 }
@@ -680,7 +685,14 @@ dialog p { white-space: pre-line; }
     <main id="main-content" class="boot" tabindex="-1">
       <p class="eyebrow">ESTUDIO INTERACTIVO</p>
       <h1>Preparando tu espacio de estudio…</h1>
-      <p>Todo funciona en este dispositivo y sin conexión.</p>
+      <p>La aplicación funciona sin conexión en un navegador compatible.</p>
+      <aside class="notice warning boot-fallback" data-boot-fallback role="note" aria-labelledby="boot-fallback-title">
+        <span class="notice-icon" aria-hidden="true">!</span>
+        <div>
+          <strong id="boot-fallback-title">Si esta pantalla no cambia, este visor no permite usar la aplicación</strong>
+          <p>Volvé al mensaje y abrí la dirección web de Estudio Interactivo directamente en Safari. Si recibiste solo este archivo, pedí el enlace web.</p>
+        </div>
+      </aside>
     </main>
   </div>
   <noscript>Necesitás habilitar JavaScript para usar Estudio Interactivo.</noscript>

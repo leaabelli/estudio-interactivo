@@ -31,6 +31,12 @@ cada acción aceptada en una cola local. Para mover el avance, usá
 archivo es dato portátil del usuario, no una dependencia ni una parte de la
 aplicación distribuida.
 
+En iPhone o iPad, la vista previa de archivos de WhatsApp y Archivos no funciona
+como un navegador completo. Abrí el enlace de la versión publicada directamente
+en Safari. Mientras prepara el entorno, el propio HTML muestra esta indicación
+para no quedar indefinidamente en **Preparando…** sin explicar qué hacer. Si te
+compartieron solamente el archivo, pedí también la dirección web publicada.
+
 ## Desarrollo
 
 Requiere Bun 1.3.14 y Python 3 con las dependencias del manual. El usuario final

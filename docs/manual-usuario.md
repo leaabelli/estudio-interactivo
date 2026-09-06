@@ -25,7 +25,7 @@ Estudiá con bancos grandes de preguntas de opción múltiple, continuá en vari
 
 ## 1. Empezar en dos minutos
 
-1. Abrí `index.html` con una versión actualizada de Chrome, Edge, Firefox o Safari. También podés abrir la versión publicada en GitHub Pages.
+1. En una computadora, abrí `index.html` con una versión actualizada de Chrome, Edge, Firefox o Safari. En iPhone o iPad, abrí la versión publicada en GitHub Pages directamente en Safari: la vista previa de WhatsApp o Archivos no funciona como un navegador completo.
 2. Elegí **Cargar módulo**.
 3. Seleccioná un archivo terminado en `.study.json`.
 4. Revisá la vista previa: título, materia, cantidad de preguntas, distribución por dificultad y revisión de estado.
@@ -184,6 +184,10 @@ Cambiá el banco a **Todas** para repasar, seleccioná otra dificultad o generá
 ### El navegador no puede guardar localmente
 
 El módulo sigue disponible en memoria durante esa pestaña y aparece una advertencia persistente. Exportá inmediatamente. Si el almacenamiento vuelve a estar disponible, usá **Reintentar guardado**.
+
+### La pantalla queda en Preparando en iPhone o iPad
+
+No intentes usar el HTML dentro de la vista previa de WhatsApp o Archivos. Volvé al mensaje o a la ubicación donde recibiste el enlace y abrí la versión web directamente en Safari. Si recibiste solamente el archivo, pedí también la dirección web publicada. Mientras prepara el entorno, el HTML muestra esta misma indicación hasta que la aplicación logra reemplazar la pantalla inicial.
 
 ### El archivo no se carga
 
