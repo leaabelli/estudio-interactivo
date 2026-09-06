@@ -120,6 +120,20 @@ function findQuestion(snapshot: StudySnapshot, id: string): StudyQuestion {
   return question;
 }
 
+export function requiresSeparateExistingBackup(
+  currentKey: string | null,
+  candidateKey: string,
+  ownedWriteToken: number | null,
+  observedWriteToken: number | null,
+): boolean {
+  return (
+    currentKey !== candidateKey ||
+    ownedWriteToken === null ||
+    observedWriteToken === null ||
+    ownedWriteToken !== observedWriteToken
+  );
+}
+
 class Application {
   private root: HTMLElement;
   private repository!: StudyRepository;
@@ -681,6 +695,10 @@ class Application {
       }
       const candidate = parsed as StudySnapshot;
       const candidateKey = recoveryKeyForSnapshot(candidate);
+      const storeStateBeforePreview = this.store.getState();
+      const ownedWriteToken = storeStateBeforePreview.recoveryKey === candidateKey
+        ? storeStateBeforePreview.lastPersistedWriteToken
+        : null;
       const expectedWriteToken = await this.repository.getWriteToken(candidateKey);
       let existing: StudySnapshot | null = null;
       if (expectedWriteToken !== null) {
@@ -703,7 +721,15 @@ class Application {
         }
       }
       const currentKey = this.snapshot ? recoveryKeyForSnapshot(this.snapshot) : null;
-      if (existing && currentKey !== candidateKey) {
+      if (
+        existing &&
+        requiresSeparateExistingBackup(
+          currentKey,
+          candidateKey,
+          ownedWriteToken,
+          expectedWriteToken,
+        )
+      ) {
         choice = await this.ask(
           "Ya existe una recuperación con esta identidad",
           `Antes de reemplazar el estado ${existing.progress.stateRevision} de “${existing.module.title}”, se exportará una copia protectora.`,

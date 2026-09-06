@@ -277,14 +277,18 @@ export class StudyStore {
       }
 
       try {
-        await this.repository.saveSnapshot(candidate, expectedRevision);
+        const nextWriteToken = await this.repository.saveSnapshot(
+          candidate,
+          expectedRevision,
+          this.state.lastPersistedWriteToken
+        );
         this.state = {
           snapshot: candidate,
           recoveryKey,
           mode: "persistent",
           warning: null,
           lastPersistedRevision: candidate.progress.stateRevision,
-          lastPersistedWriteToken: this.repository.getKnownWriteToken(recoveryKey)
+          lastPersistedWriteToken: nextWriteToken
         };
         this.notify();
         this.publishRevision(recoveryKey, candidate.progress.stateRevision, this.state.lastPersistedWriteToken);
@@ -384,7 +388,19 @@ export class StudyStore {
       }
 
       try {
-        await this.repository.saveSnapshot(current, baseRevision);
+        const nextWriteToken = await this.repository.saveSnapshot(
+          current,
+          baseRevision,
+          baseWriteToken
+        );
+        this.state = {
+          snapshot: current,
+          recoveryKey: key,
+          mode: "persistent",
+          warning: null,
+          lastPersistedRevision: current.progress.stateRevision,
+          lastPersistedWriteToken: nextWriteToken
+        };
       } catch (error) {
         if (error instanceof RevisionConflictError || error instanceof RecoveryWriteConflictError) {
           this.state = {
@@ -401,15 +417,6 @@ export class StudyStore {
         this.notify();
         throw error;
       }
-
-      this.state = {
-        snapshot: current,
-        recoveryKey: key,
-        mode: "persistent",
-        warning: null,
-        lastPersistedRevision: current.progress.stateRevision,
-        lastPersistedWriteToken: this.repository.getKnownWriteToken(key)
-      };
       this.notify();
       this.publishRevision(key, current.progress.stateRevision, this.state.lastPersistedWriteToken);
       return current;

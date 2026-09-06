@@ -16,6 +16,7 @@ import {
 } from "../../src/application/store";
 import type { StudySnapshot } from "../../src/domain/types";
 import { createActiveRun } from "../../src/domain/runs";
+import { requiresSeparateExistingBackup } from "../../src/ui/app";
 import { makeSnapshot } from "../unit/fixtures";
 
 function nextRevision(snapshot: StudySnapshot, marker: string): StudySnapshot {
@@ -56,10 +57,12 @@ describe("StudyRepository memory fallback", () => {
     expect((await repository.listRecoveries()).map(({ key }) => key)).toEqual([secondKey, firstKey]);
 
     const candidate = nextRevision(await repository.load(firstKey), "01");
-    await repository.saveSnapshot(candidate, 0);
+    await repository.saveSnapshot(candidate, 0, repository.getKnownWriteToken(firstKey));
     expect((await repository.load(firstKey)).progress.stateRevision).toBe(1);
     candidate.progress.stateRevision = 2;
-    await expect(repository.saveSnapshot(candidate, 0)).rejects.toBeInstanceOf(RevisionConflictError);
+    await expect(
+      repository.saveSnapshot(candidate, 0, repository.getKnownWriteToken(firstKey))
+    ).rejects.toBeInstanceOf(RevisionConflictError);
 
     const detached = await repository.load(firstKey);
     detached.module.title = "Mutación externa";
@@ -110,8 +113,8 @@ describe("StudyRepository memory fallback", () => {
     const key = await repository.install(snapshot);
     const candidate = await repository.load(key);
     candidate.progress.stateRevision = Number.MAX_SAFE_INTEGER;
-    await expect(repository.saveSnapshot(candidate, 0)).rejects.toThrow(RangeError);
-    await expect(repository.saveSnapshot(candidate, -1)).rejects.toThrow(RangeError);
+    await expect(repository.saveSnapshot(candidate, 0, repository.getKnownWriteToken(key))).rejects.toThrow(RangeError);
+    await expect(repository.saveSnapshot(candidate, -1, repository.getKnownWriteToken(key))).rejects.toThrow(RangeError);
     await expect(repository.recordExportReceipt({ snapshotHash: "", stateRevision: 0, status: "attempted" })).rejects.toThrow(
       "obligatorio"
     );
@@ -142,7 +145,7 @@ describe("StudyRepository memory fallback", () => {
     internals.memoryWriteTokens.set(recoveryKeyForSnapshot(first), 3);
     const next = nextRevision(await repository.load(recoveryKeyForSnapshot(first)), "01");
     internals.memoryWriteTokens.set(recoveryKeyForSnapshot(first), 4);
-    await expect(repository.saveSnapshot(next, 0)).rejects.toBeInstanceOf(RecoveryWriteConflictError);
+    await expect(repository.saveSnapshot(next, 0, 3)).rejects.toBeInstanceOf(RecoveryWriteConflictError);
     expect((await repository.load(recoveryKeyForSnapshot(first))).module.title).toBe("Contenido divergente");
     repository.close();
   });
@@ -182,7 +185,7 @@ class FakePersistentRepository {
     return this.writeToken;
   }
 
-  async saveSnapshot(snapshot: StudySnapshot, expectedRevision: number) {
+  async saveSnapshot(snapshot: StudySnapshot, expectedRevision: number, expectedWriteToken: number | null) {
     this.saveCalls.push({ expected: expectedRevision, candidate: snapshot.progress.stateRevision });
     await new Promise((resolve) => setTimeout(resolve, 2));
     if (this.failNext) {
@@ -192,8 +195,12 @@ class FakePersistentRepository {
     if (this.snapshot.progress.stateRevision !== expectedRevision) {
       throw new RevisionConflictError(expectedRevision, this.snapshot.progress.stateRevision);
     }
+    if (this.writeToken !== expectedWriteToken) {
+      throw new RecoveryWriteConflictError(expectedWriteToken, this.writeToken);
+    }
     this.snapshot = structuredClone(snapshot);
     this.writeToken += 1;
+    return this.writeToken;
   }
 
   async remove(_key: string) {}
@@ -210,6 +217,46 @@ function makeStore(fake: FakePersistentRepository, channel: RevisionChannel = si
 }
 
 describe("StudyStore queued persistence", () => {
+  test("a cancelled import preview cannot adopt an external same-revision write token", async () => {
+    const repository = await StudyRepository.open({ indexedDB: null });
+    Object.defineProperty(repository, "isPersistent", { value: true });
+    Object.defineProperty(repository, "warning", { value: null });
+    const store = new StudyStore(repository, silentChannel(), acceptingValidator);
+    const initial = makeSnapshot();
+    await store.install(initial);
+    const key = recoveryKeyForSnapshot(initial);
+    const ownedWriteToken = store.getState().lastPersistedWriteToken;
+    expect(ownedWriteToken).toBe(1);
+
+    const replacement = makeSnapshot();
+    replacement.module.title = "Reemplazo externo";
+    const internals = repository as unknown as {
+      memorySnapshots: Map<string, StudySnapshot>;
+      memoryWriteTokens: Map<string, number>;
+    };
+    internals.memorySnapshots.set(key, structuredClone(replacement));
+    internals.memoryWriteTokens.set(key, 2);
+
+    // Same reads as the import preview; the user then cancels the dialog.
+    expect(await repository.getWriteToken(key)).toBe(2);
+    await repository.load(key);
+    expect(store.getState().lastPersistedWriteToken).toBe(ownedWriteToken);
+
+    await expect(
+      store.commitMutation((snapshot) => nextRevision(snapshot, "01"))
+    ).rejects.toBeInstanceOf(StaleStudyStateError);
+    expect(store.getState().mode).toBe("stale");
+    expect((await repository.load(key)).module.title).toBe("Reemplazo externo");
+    store.close();
+  });
+
+  test("requires a separate backup when the existing recovery has a different write token", () => {
+    expect(requiresSeparateExistingBackup("test.module@1", "test.module@1", 4, 4)).toBe(false);
+    expect(requiresSeparateExistingBackup("test.module@1", "test.module@1", 4, 5)).toBe(true);
+    expect(requiresSeparateExistingBackup("other.module@1", "test.module@1", 4, 4)).toBe(true);
+    expect(requiresSeparateExistingBackup("test.module@1", "test.module@1", null, 4)).toBe(true);
+  });
+
   test("deep-freezes exposed state and validates each candidate before persistence", async () => {
     const initial = makeSnapshot();
     const fake = new FakePersistentRepository(initial);

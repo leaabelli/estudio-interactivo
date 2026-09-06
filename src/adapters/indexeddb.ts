@@ -536,13 +536,23 @@ export class StudyRepository {
     return key;
   }
 
-  async saveSnapshot(snapshot: StudySnapshot, expectedRevision: number): Promise<void> {
+  async saveSnapshot(
+    snapshot: StudySnapshot,
+    expectedRevision: number,
+    expectedWriteToken: number | null
+  ): Promise<number> {
     const key = recoveryKeyForSnapshot(snapshot);
     // IndexedDB clones every value it stores. Avoid cloning a multi-megabyte
     // immutable bank on every answer; memory fallback still needs detachment.
     const candidate = this.database ? snapshot : cloneValue(snapshot);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
       throw new RangeError("La revisión esperada debe ser un entero seguro no negativo.");
+    }
+    if (
+      expectedWriteToken !== null &&
+      (!Number.isSafeInteger(expectedWriteToken) || expectedWriteToken < 0)
+    ) {
+      throw new RangeError("El token de escritura esperado debe ser un entero seguro no negativo o null.");
     }
     if (
       !Number.isSafeInteger(candidate.progress.stateRevision) ||
@@ -557,15 +567,14 @@ export class StudyRepository {
       const actualRevision = current?.progress.stateRevision ?? null;
       if (actualRevision !== expectedRevision) throw new RevisionConflictError(expectedRevision, actualRevision);
       const actualWriteToken = this.memorySnapshots.has(key) ? (this.memoryWriteTokens.get(key) ?? 0) : null;
-      const expectedWriteToken = this.knownWriteTokens.get(key) ?? null;
-      if (!this.knownWriteTokens.has(key) || actualWriteToken !== expectedWriteToken) {
+      if (actualWriteToken !== expectedWriteToken) {
         throw new RecoveryWriteConflictError(expectedWriteToken, actualWriteToken);
       }
       this.memorySnapshots.set(key, candidate);
       const nextWriteToken = (actualWriteToken ?? 0) + 1;
       this.memoryWriteTokens.set(key, nextWriteToken);
       this.knownWriteTokens.set(key, nextWriteToken);
-      return;
+      return nextWriteToken;
     }
 
     const transaction = this.database.transaction(
@@ -586,8 +595,7 @@ export class StudyRepository {
       throw new RevisionConflictError(expectedRevision, actualRevision);
     }
     const actualWriteToken = current?.writeToken ?? 0;
-    const expectedWriteToken = this.knownWriteTokens.get(key) ?? null;
-    if (!this.knownWriteTokens.has(key) || actualWriteToken !== expectedWriteToken) {
+    if (actualWriteToken !== expectedWriteToken) {
       transaction.abort();
       try {
         await done;
@@ -658,6 +666,7 @@ export class StudyRepository {
     }
     await done;
     this.knownWriteTokens.set(key, nextWriteToken);
+    return nextWriteToken;
   }
 
   async remove(key: string): Promise<void> {
