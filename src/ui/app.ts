@@ -33,11 +33,13 @@ import {
   saveSnapshotFile,
 } from "../adapters/files";
 import { validateSnapshot } from "../domain/validation";
+import { readRemoteSnapshot } from "../adapters/remote-modules";
 import {
   buildRunTrend,
   clampPercent,
   completedRunBelongsToSnapshot,
   createRelativeNavigationAction,
+  firstUnansweredIndex,
   hashForRoute,
   navigationBounds,
   routeFromHash,
@@ -72,6 +74,7 @@ interface ShellRefs {
   moduleTitle: HTMLElement;
   moduleMeta: HTMLElement;
   saveStatus: HTMLElement;
+  saveButton: HTMLButtonElement;
   bannerSlot: HTMLElement;
   outlet: HTMLElement;
   snackbar: HTMLElement;
@@ -274,6 +277,8 @@ class Application {
   private stale = false;
   private busy = false;
   private pendingMutations = 0;
+  private exporting = false;
+  private importing = false;
   private shellRefs: ShellRefs | null = null;
   private renderedView: View | null = null;
   private snackbarTimer: number | null = null;
@@ -476,23 +481,25 @@ class Application {
         node("p", { className: "page-intro", text: "Cada copia pertenece a este navegador y a esta ubicación del HTML." }),
         this.renderRecoveryList(),
         this.importControl("Cargar otro módulo"),
+        this.remoteImportControl(),
       );
     } else {
       main.append(
         node("div", { className: "entry-copy" },
           node("p", { className: "eyebrow", text: "TU ESPACIO DE PRÁCTICA" }),
           node("h1", { className: "route-title", text: "Estudiá a tu ritmo", attrs: { tabindex: "-1" } }),
-          node("p", { className: "page-intro", text: "Cargá un módulo, practicá en etapas y llevate el progreso dentro del mismo archivo." }),
+          node("p", { className: "page-intro", text: "Cargá tus preguntas, practicá en etapas y guardá tu progreso para seguir después." }),
         ),
         node("section", { className: "import-card", attrs: { "aria-label": "Cargar módulo de estudio" } },
           node("div", { className: "import-illustration", attrs: { "aria-hidden": "true" } }, ".study"),
-          node("h2", { text: "Abrí un módulo" }),
-          node("p", { text: "Todo se procesa en este dispositivo. No hace falta internet." }),
-          this.importControl("Elegir archivo"),
-          node("p", { className: "supporting", text: "Podés empezar con modulo-prueba.study.json." }),
+          node("h2", { text: "Cargá tus preguntas" }),
+          node("p", { text: "Tus respuestas y tu progreso quedan en este dispositivo." }),
+          node("div", { className: "button-row" }, this.importControl("Elegir archivo"), this.remoteImportControl()),
+          node("p", { className: "supporting", text: "El .study.json contiene tus preguntas y tu progreso. Solo la carga desde enlace necesita conexión." }),
         ),
       );
     }
+    main.append(button("Cómo usar", "text-button entry-help", () => this.showHelp()));
     if (this.notice) main.prepend(this.renderNotice());
     return main;
   }
@@ -527,9 +534,13 @@ class Application {
     const moduleTitle = node("strong", { className: "app-module-title", text: snapshot.module.title });
     const moduleMeta = node("span", { className: "app-module-meta", text: snapshot.module.subject });
     const saveStatus = node("div", { className: "save-status", attrs: { role: "status", "aria-live": "polite" } });
+    const saveButton = button("Guardar archivo…", "secondary app-save", async () => { await this.exportSnapshot(); });
+    saveButton.dataset.action = "save-file";
+    saveButton.title = "Guardá tus preguntas y el progreso en un archivo para continuar después o en otro dispositivo";
     const appBar = node("header", { className: "app-bar" },
       node("div", { className: "app-bar-module" }, moduleTitle, moduleMeta),
       saveStatus,
+      node("div", { className: "app-bar-actions" }, saveButton, button("Cómo usar", "text-button app-help", () => this.showHelp())),
     );
     const bannerSlot = node("div", { className: "banner-slot" });
     const outlet = node("div", { className: "route-outlet" });
@@ -542,7 +553,7 @@ class Application {
     if (this.snackbarTimer !== null) window.clearTimeout(this.snackbarTimer);
     this.snackbarTimer = null;
     this.shownNoticeKey = "";
-    this.shellRefs = { shell, navLinks, moduleTitle, moduleMeta, saveStatus, bannerSlot, outlet, snackbar, liveRegion };
+    this.shellRefs = { shell, navLinks, moduleTitle, moduleMeta, saveStatus, saveButton, bannerSlot, outlet, snackbar, liveRegion };
     this.renderedView = null;
   }
 
@@ -574,12 +585,14 @@ class Application {
     }
 
     const state = this.busy ? "busy" : this.stale ? "stale" : this.volatile ? "volatile" : "saved";
-    const label = this.busy ? "Guardando…" : this.stale ? "Solo lectura" : this.volatile ? "Solo en memoria" : "Guardado local";
+    const label = this.busy ? "Guardando…" : this.stale ? "Solo lectura" : this.volatile ? "Sin copia local" : "En este navegador";
+    const detail = this.stale ? "Otra pestaña tiene cambios" : this.volatile ? "Guardá un archivo ahora" : "No actualiza tu archivo";
     refs.saveStatus.className = `save-status ${state}`;
     refs.saveStatus.replaceChildren(
       node("span", { className: "status-dot", attrs: { "aria-hidden": "true" } }),
-      node("span", {}, node("strong", { text: label }), node("small", { text: `Estado ${snapshot.progress.stateRevision}` })),
+      node("span", {}, node("strong", { text: label }), node("small", { text: detail })),
     );
+    refs.saveButton.disabled = this.busy || this.exporting;
     refs.liveRegion.textContent = this.busy ? "Guardando cambios" : "";
     this.syncNotice();
   }
@@ -664,13 +677,14 @@ class Application {
       this.pageHeader("Recuperaciones", "Abrí, exportá o eliminá una copia guardada en este navegador."),
       this.renderRecoveryList(),
       this.importControl("Cargar otro módulo"),
+      this.remoteImportControl(),
     );
   }
 
   private renderStudy(): HTMLElement {
     const snapshot = this.snapshot!;
     const wrapper = node("div", { className: "route-panel study-route" },
-      this.pageHeader("Estudiar", "Elegí cómo practicar. El banco no repite preguntas nuevas en silencio.", "PRÁCTICA"),
+      this.pageHeader("Estudiar", "Elegí la dificultad y decidí si querés preguntas nuevas o repasar las anteriores.", "PRÁCTICA"),
     );
     if (snapshot.progress.activeRun) {
       const run = snapshot.progress.activeRun;
@@ -745,7 +759,7 @@ class Application {
     startButton.disabled = this.busy || this.stale;
     wrapper.append(node("section", { className: "setup-panel" },
       node("div", { className: "section-heading" },
-        node("div", {}, node("p", { className: "eyebrow", text: "NUEVO RUN" }), node("h2", { text: "Prepará un examen modelo" })),
+        node("div", {}, node("p", { className: "eyebrow", text: "NUEVO EXAMEN" }), node("h2", { text: "Prepará un examen modelo" })),
         node("span", { className: "question-count-chip", text: "10 preguntas" }),
       ),
       node("div", { className: "exam-setup" },
@@ -858,7 +872,7 @@ class Application {
     route.append(stage, this.renderQuestionRail(), node("footer", { className: "exam-actions" },
       node("div", { className: "button-row exam-navigation" }, previousButton, nextButton),
       node("div", { className: "button-row exam-submit" },
-        button("Guardar y salir", "text-button", () => this.setView("study")),
+        button("Pausar examen", "text-button", () => this.setView("study")),
         submitButton,
       ),
     ));
@@ -1106,7 +1120,7 @@ class Application {
     const history = node("ol", { className: "history-list" });
     const runs = [...snapshot.progress.runs].reverse().slice(0, 25);
     if (!runs.length) {
-      wrapper.append(node("section", { className: "empty-state" }, node("h2", { text: "Tu historial empieza con el primer examen" }), node("p", { text: "Cuando entregues un run, vas a ver su resultado y el avance de cobertura." }), button("Ir a Estudiar", "primary", () => this.setView("study"))));
+      wrapper.append(node("section", { className: "empty-state" }, node("h2", { text: "Tu historial empieza con el primer examen" }), node("p", { text: "Cuando entregues un examen, vas a ver su resultado y cuánto avanzaste." }), button("Ir a Estudiar", "primary", () => this.setView("study"))));
       return wrapper;
     }
     for (const run of runs) history.append(node("li", { className: "history-item" },
@@ -1157,7 +1171,7 @@ class Application {
       ),
     );
     if (!trend.length) {
-      section.append(node("div", { className: "empty-chart" }, node("strong", { text: "Sin runs todavía" }), node("span", { text: "La tendencia aparece después del primer examen." })));
+      section.append(node("div", { className: "empty-chart" }, node("strong", { text: "Sin exámenes todavía" }), node("span", { text: "La tendencia aparece después del primer examen." })));
       return section;
     }
 
@@ -1197,12 +1211,12 @@ class Application {
   private renderModule(): HTMLElement {
     const snapshot = this.snapshot!;
     const wrapper = node("div", { className: "route-panel module-route" },
-      this.pageHeader("Módulo", "Guardá una copia portable o revisá cómo está identificado este banco.", "ARCHIVO"),
+      this.pageHeader("Módulo", "Guardá tus preguntas y tu progreso, o cargá otra materia.", "ARCHIVO"),
     );
     wrapper.append(node("section", { className: "surface-panel primary-panel" },
       node("h2", { text: "Protegé tu progreso" }),
-      node("p", { text: "La recuperación del navegador ayuda en este dispositivo. El archivo exportado es la copia portable entre sesiones, ubicaciones y dispositivos." }),
-      node("div", { className: "button-row" }, button("Guardar archivo…", "primary", () => this.exportSnapshot()), this.importControl("Cargar o reemplazar…")),
+      node("p", { text: "La app guarda tus respuestas en este navegador, pero no modifica el archivo que cargaste. Usá Guardar archivo al terminar para llevarte una copia con tus preguntas y tu progreso." }),
+      node("div", { className: "button-row" }, button("Guardar archivo…", "primary", () => this.exportSnapshot()), this.importControl("Cargar o reemplazar…"), this.remoteImportControl()),
     ));
     if (this.volatile || this.stale) {
       wrapper.append(node("section", { className: "surface-panel warning-panel" },
@@ -1241,7 +1255,7 @@ class Application {
     if (!rememberedRun) this.resultRun = null;
     const run = rememberedRun ?? snapshot.progress.runs.at(-1) ?? null;
     const wrapper = node("div", { className: "route-panel results-route" },
-      this.pageHeader("Resultados", "Revisá qué salió bien y qué conviene practicar otra vez.", "RUN COMPLETADO"),
+      this.pageHeader("Resultados", "Revisá qué salió bien y qué conviene practicar otra vez.", "EXAMEN COMPLETADO"),
     );
     if (!run) return node("div", {}, wrapper, node("p", { text: "No hay un resultado reciente para mostrar." }));
     const coverageGain = run.coverageAfterCount - run.coverageBeforeCount;
@@ -1252,7 +1266,7 @@ class Application {
         node("h2", { text: `${run.correctCount} de ${run.items.length} correctas` }),
         node("p", { text: coverageGain
           ? `Sumaste ${coverageGain} ${coverageGain === 1 ? "pregunta nueva" : "preguntas nuevas"} a tu cobertura.`
-          : "Este run reforzó preguntas que ya habías evaluado." }),
+          : "Este examen reforzó preguntas que ya habías evaluado." }),
         node("div", { className: "result-stats" },
           node("span", { className: "success-chip", text: `${run.correctCount} correctas` }),
           node("span", { className: "error-chip", text: `${run.incorrectCount} incorrectas` }),
@@ -1358,10 +1372,39 @@ class Application {
 
   private async importFile(file: File | null): Promise<void> {
     if (!file) return;
-    this.notice = { kind: "success", title: "Validando…", detail: file.name };
+    await this.importSnapshot(() => readSnapshotFile(file), file.name);
+  }
+
+  private remoteImportControl(): HTMLButtonElement {
+    const control = button("Cargar desde enlace", "secondary", () => this.importUrl());
+    control.dataset.action = "import-url";
+    return control;
+  }
+
+  private async importUrl(): Promise<void> {
+    if (this.importing || this.busy) return;
+    const inputId = `remote-module-${++inputSerial}`;
+    const input = node("input", { attrs: {
+      id: inputId, type: "url", required: "", placeholder: "https://ejemplo.com/materia.study.json",
+      autocomplete: "off", spellcheck: "false", inputmode: "url",
+    } });
+    const body = node("div", { className: "remote-import" },
+      node("p", { text: "Pegá el enlace público directo al archivo o su enlace de GitHub. Necesitás conexión solo para cargarlo; después podés estudiar sin internet." }),
+      node("div", { className: "field" }, node("label", { text: "Enlace del módulo (.study.json)", attrs: { for: inputId } }), input),
+      node("p", { className: "supporting", text: "Debe empezar con https:// y permitir la descarga sin iniciar sesión. No se envían tus preguntas ni tu progreso al sitio. Antes de cargar, vas a poder revisar una vista previa." }),
+    );
+    const choice = await this.ask("Cargar desde enlace", body, [["cancel", "Cancelar", "secondary"], ["load", "Ver vista previa", "primary"]], input);
+    if (choice !== "load") return;
+    await this.importSnapshot(() => readRemoteSnapshot(input.value), "Descargando y validando el módulo…");
+  }
+
+  private async importSnapshot(read: () => Promise<unknown>, label: string): Promise<void> {
+    if (this.importing || this.busy) return;
+    this.importing = true;
+    this.notice = { kind: "success", title: "Cargando…", detail: label, persistent: true };
     this.render();
     try {
-      const parsed = await readSnapshotFile(file);
+      const parsed = await read();
       const validation = validateSnapshot(parsed);
       if (!validation.ok) {
         const details = validation.errors.slice(0, 5).map((item) => `${item.path}: ${item.message}`).join("; ");
@@ -1384,7 +1427,8 @@ class Application {
         }
       }
       const counts = DIFFICULTIES.map((level) => `${difficultyLabel(level)} ${candidate.questions.filter((q) => q.difficulty === level).length}`).join(" · ");
-      const preview = `${candidate.module.title}\n${candidate.module.subject}\n${candidate.questions.length} preguntas · ${counts}\nEstado ${candidate.progress.stateRevision}`;
+      const metrics = deriveMetrics(candidate);
+      const preview = `${candidate.module.title}\n${candidate.module.subject}\n${candidate.questions.length} preguntas · ${counts}\n${metrics.evaluatedQuestions} preguntas evaluadas · ${candidate.progress.activeRun ? "Hay un examen para reanudar" : "Sin examen pendiente"}\nÚltimo cambio: ${formatDate(candidate.progress.updatedAt)}`;
       this.notice = null;
       this.render();
       let choice = await this.ask("Vista previa del módulo", preview, [["cancel", "Cancelar", "secondary"], ["install", this.snapshot ? "Proteger y reemplazar…" : "Cargar módulo", "primary"]]);
@@ -1440,6 +1484,8 @@ class Application {
       this.notice = { kind: "error", title: "No se pudo cargar el módulo", detail: `${detail} No se reemplazó nada.`, persistent: true };
       this.render();
       requestAnimationFrame(() => this.root.querySelector<HTMLElement>("[role=alert]")?.focus());
+    } finally {
+      this.importing = false;
     }
   }
 
@@ -1512,7 +1558,13 @@ class Application {
     const unanswered = run.items.filter((item) => item.answer === null).length;
     if (unanswered) {
       const choice = await this.ask("Quedan respuestas pendientes", `${unanswered} ${unanswered === 1 ? "pregunta quedará" : "preguntas quedarán"} como “No sé” y contará como incorrecta.`, [["review", "Revisar respuestas", "secondary"], ["submit", "Entregar igual", "primary"]]);
-      if (choice !== "submit") return;
+      if (choice !== "submit") {
+        if (choice === "review") {
+          const pendingIndex = firstUnansweredIndex(this.snapshot?.progress.activeRun?.items ?? []);
+          if (pendingIndex !== null) await this.navigate(pendingIndex);
+        }
+        return;
+      }
     }
     const candidate = await this.commit((current) => submitActiveRun(current, new Date().toISOString()));
     if (candidate) {
@@ -1522,14 +1574,17 @@ class Application {
   }
 
   private async exportSnapshot(silent = false): Promise<"confirmed" | "attempted" | null> {
-    if (!this.snapshot) return null;
+    if (!this.snapshot || this.busy || this.exporting) return null;
+    const snapshot = this.snapshot;
+    this.exporting = true;
+    this.syncAppChrome();
     try {
-      const result = await saveSnapshotFile(this.snapshot);
+      const result = await saveSnapshotFile(snapshot);
       const status = result.status;
       if (status === "cancelled") return null;
       await this.repository.recordExportReceipt({
-        recoveryKey: recoveryKeyForSnapshot(this.snapshot),
-        stateRevision: this.snapshot.progress.stateRevision,
+        recoveryKey: recoveryKeyForSnapshot(snapshot),
+        stateRevision: snapshot.progress.stateRevision,
         snapshotHash: result.snapshotHash,
         status,
         at: new Date().toISOString(),
@@ -1546,6 +1601,9 @@ class Application {
       this.notice = { kind: "error", title: "No se guardó ningún archivo", detail: String(error), persistent: true };
       this.render();
       return null;
+    } finally {
+      this.exporting = false;
+      this.syncAppChrome();
     }
   }
 
@@ -1595,17 +1653,44 @@ class Application {
     }
   }
 
-  private ask(title: string, body: string, choices: Array<[string, string, string]>): Promise<string> {
+  private async showHelp(): Promise<void> {
+    const steps = node("ol", { className: "help-steps" });
+    for (const [title, detail] of [
+      ["Cargá tus preguntas", "Elegí un archivo .study.json o usá Cargar desde enlace si ya está publicado en la web. La app llama módulo a ese archivo: contiene tus preguntas y puede incluir progreso anterior. Solo la carga por enlace necesita internet."],
+      ["Prepará un examen", "En Estudiar elegí la dificultad y Solo nuevas para avanzar, o Todas para repasar. Cada examen tiene 10 preguntas; si no alcanzan, la app te avisa."],
+      ["Respondé y revisá", "Podés volver con Anterior o los números. Pausar examen conserva tus respuestas sin corregirlas. Entregar examen muestra el resultado, las explicaciones y las fuentes."],
+      ["Guardá una copia para seguir después", "Usá Guardar archivo… y comprobá la descarga. Incluye tus preguntas y tu progreso, incluso un examen pausado. Para cambiar de dispositivo, cargá ese archivo más reciente."],
+    ] as const) steps.append(node("li", {}, node("h3", { text: title }), node("p", { text: detail })));
+    const help = node("div", { className: "quick-help" },
+      steps,
+      node("section", { className: "help-note" },
+        node("h3", { text: "¿Todavía no tenés un test?" }),
+        node("p", { text: "Pedile a quien prepara tus preguntas un módulo .study.json compatible con Estudio Interactivo. Indicá la materia, los temas, el material de referencia y cuántas preguntas querés por dificultad. La app no importa PDF o Word directamente ni tiene un editor de preguntas." }),
+      ),
+      node("p", { className: "supporting", text: "En iPhone o iPad abrí el sitio en Safari. La vista previa de WhatsApp o Archivos no permite estudiar. El guardado en el navegador no modifica tu archivo ni sincroniza dispositivos." }),
+    );
+    await this.ask("Cómo usar Estudio Interactivo", help, [["close", "Entendido", "primary"]]);
+  }
+
+  private ask(title: string, body: string | HTMLElement, choices: Array<[string, string, string]>, initialInput?: HTMLInputElement): Promise<string> {
     const serial = ++dialogSerial;
     const headingId = `dialog-title-${serial}`;
     const descriptionId = `dialog-description-${serial}`;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const dialog = node("dialog", { attrs: { "aria-labelledby": headingId, "aria-describedby": descriptionId } });
+    const isHelp = typeof body !== "string" && !initialInput;
+    const dialog = node("dialog", { className: isHelp ? "help-dialog" : "", attrs: { "aria-labelledby": headingId, "aria-describedby": descriptionId } });
     const heading = node("h2", { text: title, attrs: { id: headingId, tabindex: "-1" } });
     const form = node("form", { attrs: { method: "dialog" } });
-    form.append(heading, node("p", { text: body, attrs: { id: descriptionId } }));
+    form.append(heading, typeof body === "string"
+      ? node("p", { text: body, attrs: { id: descriptionId } })
+      : node("div", { className: isHelp ? "help-body" : "", attrs: { id: descriptionId, ...(isHelp ? { tabindex: "0" } : {}) } }, body));
     const row = node("div", { className: "button-row" });
-    for (const [value, label, className] of choices) row.append(node("button", { className, text: label, attrs: { type: "submit", value } }));
+    for (const [value, label, className] of choices) {
+      const inputCancel = Boolean(initialInput) && value === "cancel";
+      const choice = node("button", { className, text: label, attrs: { type: inputCancel ? "button" : "submit", value, ...(value === "cancel" ? { formnovalidate: "" } : {}) } });
+      if (inputCancel) choice.addEventListener("click", () => dialog.close(value));
+      row.append(choice);
+    }
     form.append(row);
     dialog.append(form);
     document.body.append(dialog);
@@ -1619,9 +1704,9 @@ class Application {
         focusTarget?.focus({ preventScroll: true });
         resolve(value);
       }, { once: true });
-      dialog.addEventListener("cancel", () => { dialog.returnValue = choices[0]?.[0] ?? "cancel"; });
+      dialog.addEventListener("cancel", () => { dialog.returnValue = "cancel"; });
       dialog.showModal();
-      requestAnimationFrame(() => (row.querySelector("button") ?? heading).focus());
+      requestAnimationFrame(() => (initialInput ?? (isHelp ? heading : row.querySelector("button") ?? heading)).focus());
     });
   }
 }

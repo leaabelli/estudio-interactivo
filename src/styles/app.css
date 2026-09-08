@@ -216,7 +216,9 @@ p { max-width: 68ch; }
   backdrop-filter: blur(14px);
 }
 
-.app-bar-module { display: grid; min-width: 0; }
+.app-bar-module { display: grid; min-width: 0; flex: 1; }
+.app-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 0.5rem; }
+.app-bar-actions button { min-height: 2.75rem; padding: 0.5rem 0.7rem; white-space: nowrap; font-size: 0.8rem; }
 .app-module-title, .app-module-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-module-title { font-size: 0.95rem; }
 .app-module-meta { color: var(--muted); font-size: 0.78rem; }
@@ -422,7 +424,7 @@ p { max-width: 68ch; }
 .exam-progress::-webkit-progress-value, .difficulty-bar progress::-webkit-progress-value { border-radius: 999px; background: var(--primary); }
 .exam-progress::-moz-progress-bar, .difficulty-bar progress::-moz-progress-bar { border-radius: 999px; background: var(--primary); }
 
-.question-stage { min-height: clamp(27rem, 56vh, 34rem); scroll-margin-top: 6rem; overflow-anchor: none; }
+.question-stage { min-height: clamp(27rem, 56vh, 34rem); scroll-margin-top: calc(var(--app-bar) + 1.5rem); overflow-anchor: none; }
 .question-card {
   margin-top: 1rem;
   padding: clamp(1.25rem, 4vw, 2.25rem);
@@ -615,6 +617,7 @@ p { max-width: 68ch; }
 .entry-copy { align-self: center; }
 .entry-copy h1 { max-width: 10ch; font-size: clamp(2.75rem, 7vw, 4.75rem); letter-spacing: -0.055em; }
 .import-card { align-self: center; padding: clamp(1.5rem, 4vw, 2.25rem); border: 1px solid #d8e0e9; border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-2); }
+.entry-help { grid-column: 1 / -1; justify-self: start; }
 .import-illustration { display: grid; width: 4.5rem; height: 4.5rem; place-items: center; margin-bottom: 1.2rem; border-radius: 1.25rem; background: var(--primary-soft); color: var(--primary); font-size: 0.75rem; font-weight: 800; }
 .boot > .eyebrow, .boot > .route-title, .boot > .page-intro, .boot > .recovery-list, .boot > .recovery-list + span, .boot > .notice { grid-column: 1 / -1; }
 .boot-fallback { max-width: 42rem; }
@@ -631,8 +634,27 @@ dialog {
 dialog::backdrop { background: #17203370; backdrop-filter: blur(2px); }
 dialog h2 { margin-top: 0; }
 dialog p { white-space: pre-line; }
+.help-steps { padding-left: 1.5rem; margin-top: 1rem; }
+.help-steps li { padding-left: 0.4rem; margin-bottom: 1.1rem; }
+.help-steps li::marker { color: var(--primary); font-weight: 750; }
+.quick-help h3 { font-size: 1rem; margin: 0 0 0.35rem; }
+.quick-help p { font-size: 0.9rem; margin: 0 0 0.75rem; }
+.help-note { padding: 1rem; margin-bottom: 1rem; border-radius: 1rem; background: var(--primary-soft); }
+.help-note p { margin-bottom: 0; }
+.help-dialog { overflow: hidden; max-height: calc(100dvh - 2rem); }
+.help-dialog form { display: flex; flex-direction: column; max-height: calc(100dvh - 5rem - 2px); }
+.help-dialog h2, .help-dialog .button-row { flex-shrink: 0; }
+.help-dialog .button-row { padding-top: 0.75rem; }
+.help-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.15rem; }
+.remote-import input { width: 100%; min-width: 0; min-height: 2.75rem; padding: 0.65rem; border: 1px solid var(--outline); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); }
+.remote-import .supporting { margin-block: 1rem; }
 
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+
+@media (min-width: 900px) and (max-width: 1199px) {
+  .progress-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .progress-summary .coverage-card { grid-column: span 3; }
+}
 
 @media (max-width: 899px) {
   :root { --rail: 0rem; }
@@ -651,10 +673,16 @@ dialog p { white-space: pre-line; }
 }
 
 @media (max-width: 639px) {
-  .app-bar { min-height: 4rem; padding-inline: 1rem; }
-  .app-module-title, .app-module-meta { max-width: 12rem; }
+  :root { --app-bar: 7rem; }
+  .app-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem 0.5rem; padding-inline: 1rem; }
+  .app-bar-module { grid-column: 1; grid-row: 1; }
+  .app-bar-actions { display: contents; }
+  .app-save { grid-column: 2; grid-row: 2; }
+  .app-help { grid-column: 2; grid-row: 1; justify-self: end; }
+  .app-module-title, .app-module-meta { max-width: 100%; }
   .save-status { padding: 0.35rem 0.55rem; }
-  .save-status small { display: none; }
+  .save-status { grid-column: 1; grid-row: 2; justify-self: start; max-width: 100%; }
+  .save-status strong, .save-status small { font-size: 0.65rem; }
   .main { padding-inline: 1rem; }
   .page-header { margin-bottom: 1.5rem; }
   .overview-grid, .metric-card-grid, .progress-summary { grid-template-columns: 1fr; }

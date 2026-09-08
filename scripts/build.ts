@@ -48,7 +48,7 @@ const csp = [
   `style-src 'sha256-${sha256(styles)}'`,
   "img-src data:",
   "font-src data:",
-  "connect-src 'none'",
+  "connect-src https:",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",

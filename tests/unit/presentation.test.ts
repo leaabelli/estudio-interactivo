@@ -4,6 +4,7 @@ import {
   buildRunTrend,
   completedRunBelongsToSnapshot,
   createRelativeNavigationAction,
+  firstUnansweredIndex,
   hashForRoute,
   navigationBounds,
   routeFromHash,
@@ -45,6 +46,18 @@ function completedRun(
 }
 
 describe("presentation helpers", () => {
+  test("review targets the first pending question, not an explicit unknown answer", () => {
+    expect(firstUnansweredIndex([
+      { answer: { kind: "option", optionId: "a" } },
+      { answer: { kind: "dontKnow" } },
+      { answer: null },
+      { answer: null },
+    ])).toBe(2);
+    expect(firstUnansweredIndex([{ answer: null }])).toBe(0);
+    expect(firstUnansweredIndex([{ answer: { kind: "dontKnow" } }])).toBeNull();
+    expect(firstUnansweredIndex([])).toBeNull();
+  });
+
   test("maps every app route to a stable hash and back", () => {
     for (const view of ["study", "exam", "results", "progress", "module"] as const) {
       expect(routeFromHash(hashForRoute(view))).toBe(view);

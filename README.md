@@ -9,7 +9,8 @@ incluir tablas, imágenes y diagramas accesibles.
 
 El único archivo que se comparte o publica como aplicación es `index.html`.
 Contiene toda la interfaz, los estilos y la lógica; no descarga código, fuentes,
-módulos ni otros recursos durante el uso.
+ni otros recursos de la aplicación durante el uso. Las preguntas se cargan
+explícitamente desde un archivo local o, con conexión, desde un enlace HTTPS.
 
 Los demás archivos pertenecen al proyecto de desarrollo o a su documentación:
 
@@ -17,7 +18,8 @@ Los demás archivos pertenecen al proyecto de desarrollo o a su documentación:
   demostraciones locales, incluido un ejemplo de cada formato visual. Se carga
   desde la aplicación como cualquier otro módulo externo; no forma parte del
   HTML ni del deploy.
-- `output/pdf/manual-usuario.pdf`: manual de uso en español para consulta local.
+- [manual-usuario.pdf](output/pdf/manual-usuario.pdf): guía visual en español,
+  con capturas numeradas para cargar tests, practicar y guardar el progreso.
   Se genera y verifica como artefacto documental, pero no se publica en GitHub
   Pages.
 - `src/`, `scripts/` y `tests/`: fuentes, compilación y controles de calidad que
@@ -27,12 +29,25 @@ Los demás archivos pertenecen al proyecto de desarrollo o a su documentación:
 
 Abrí `index.html`, elegí un módulo `*.study.json` desde tu dispositivo y prepará
 un examen. Para probar el proyecto podés seleccionar
-`modulo-prueba.study.json`. La aplicación no hace solicitudes de red y guarda
+`modulo-prueba.study.json`. La aplicación no hace solicitudes de red al abrirse;
+solo **Cargar desde enlace** descarga el módulo que indiques. Guarda
 cada acción aceptada en una cola local. Para mover el avance, usá
-**Módulo > Guardar archivo** y conservá el `.study.json` más reciente. Ese
+**Guardar archivo…** en la barra superior y conservá el `.study.json` más reciente. Ese
 archivo es dato portátil del usuario, no una dependencia ni una parte de la
 aplicación distribuida. Las tablas y los recursos raster viajan incrustados en
 ese mismo JSON, de modo que tampoco necesitan internet ni archivos auxiliares.
+
+**Cómo usar** abre una ayuda breve dentro del propio HTML, también sin conexión.
+**Pausar examen** conserva las respuestas sin corregirlas; no descarga un archivo.
+
+**Cargar desde enlace** acepta un enlace público HTTPS directo al JSON. El sitio
+de origen debe permitir la lectura desde el navegador (CORS). Si no la permite,
+descargá el archivo y elegilo localmente. No se envían respuestas ni credenciales
+al origen y el enlace no sincroniza el progreso. Tras cargarlo, el estudio sigue
+funcionando sin conexión. El límite del archivo y la validación son los mismos
+en las dos formas de importación.
+También se aceptan enlaces normales a archivos públicos `.study.json` en GitHub;
+la aplicación obtiene automáticamente su versión de descarga.
 
 En iPhone o iPad, la vista previa de archivos de WhatsApp y Archivos no funciona
 como un navegador completo. Abrí el enlace de la versión publicada directamente
@@ -51,7 +66,7 @@ bun run test:all
 ```
 
 `test:all` ejecuta tests unitarios, contractuales y de integración; reconstruye
-y verifica el HTML sin red; valida el módulo inicial; genera y revisa el PDF
+y verifica el HTML autocontenido; valida el módulo inicial; genera y revisa el PDF
 local; y crea `site/` con exactamente el único artefacto publicable:
 `index.html`.
 

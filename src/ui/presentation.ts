@@ -1,4 +1,4 @@
-import type { CompletedRun, StudySnapshot } from "../domain/types";
+import type { CompletedRun, RunItem, StudySnapshot } from "../domain/types";
 
 export type RouteView = "study" | "exam" | "results" | "progress" | "module";
 
@@ -70,6 +70,11 @@ export function createRelativeNavigationAction(
 
 export function scorePercent(correctCount: number, itemCount: number): number {
   return clampPercent(percentage(correctCount, itemCount));
+}
+
+export function firstUnansweredIndex(items: readonly Pick<RunItem, "answer">[]): number | null {
+  const index = items.findIndex((item) => item.answer === null);
+  return index < 0 ? null : index;
 }
 
 export function runAccuracyPercent(run: Pick<CompletedRun, "correctCount" | "items">): number {

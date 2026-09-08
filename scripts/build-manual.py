@@ -4,16 +4,19 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from pathlib import Path
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     BaseDocTemplate,
+    Flowable,
     Frame,
     KeepTogether,
     PageBreak,
@@ -27,20 +30,78 @@ from reportlab.platypus import (
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "docs" / "manual-usuario.md"
+IMAGE_ROOT = ROOT / "docs" / "images" / "manual"
 OUTPUT = ROOT / "output" / "pdf" / "manual-usuario.pdf"
 PAGE_WIDTH, PAGE_HEIGHT = A4
-INK = colors.HexColor("#13243e")
-MUTED = colors.HexColor("#526170")
-PAPER = colors.HexColor("#fffdf8")
-CANVAS = colors.HexColor("#f5f1e8")
-ACCENT = colors.HexColor("#a9520a")
-ACCENT_SOFT = colors.HexColor("#f3e1cf")
-LINE = colors.HexColor("#d7d0c4")
+INK = colors.HexColor("#202124")
+MUTED = colors.HexColor("#5f6368")
+PAPER = colors.white
+CANVAS = colors.HexColor("#f8fafd")
+ACCENT = colors.HexColor("#1a73e8")
+ACCENT_SOFT = colors.HexColor("#e8f0fe")
+LINE = colors.HexColor("#dadce0")
 
 
 SANS = "Helvetica"
 SANS_BOLD = "Helvetica-Bold"
-SERIF = "Times-Bold"
+
+
+class AnnotatedScreenshot(Flowable):
+    """A real screenshot with optional, normalized click-target markers."""
+
+    def __init__(self, image_path: str):
+        super().__init__()
+        self.path = (SOURCE.parent / image_path).resolve()
+        if not self.path.is_relative_to(IMAGE_ROOT.resolve()) or self.path.suffix.lower() != ".png":
+            raise ValueError(f"La captura debe ser un PNG dentro de docs/images/manual: {image_path}")
+        if not self.path.is_file():
+            raise FileNotFoundError(f"No existe la captura del manual: {self.path}")
+        self.image = ImageReader(str(self.path))
+        pixel_width, pixel_height = self.image.getSize()
+        max_width = PAGE_WIDTH - 44 * mm
+        max_height = (135 if pixel_height > pixel_width else 112) * mm
+        scale = min(max_width / pixel_width, max_height / pixel_height)
+        self.width = pixel_width * scale
+        self.height = pixel_height * scale
+        self.hAlign = "CENTER"
+        self.markers: list[dict] = []
+        annotations = self.path.with_suffix(".json")
+        if annotations.is_file():
+            if not annotations.resolve().is_relative_to(IMAGE_ROOT.resolve()):
+                raise ValueError("Las anotaciones deben permanecer dentro de docs/images/manual")
+            data = json.loads(annotations.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or set(data) != {"markers"} or not isinstance(data["markers"], list):
+                raise ValueError(f"Formato de anotaciones inválido: {annotations}")
+            numbers: set[int] = set()
+            for marker in data["markers"]:
+                if not isinstance(marker, dict) or set(marker) != {"number", "x", "y"}:
+                    raise ValueError(f"Marcador inválido: {annotations}")
+                number, x, y = marker["number"], marker["x"], marker["y"]
+                if type(number) is not int or not 1 <= number <= 20 or number in numbers:
+                    raise ValueError(f"Número de marcador inválido o repetido: {annotations}")
+                if any(type(value) not in (float, int) or not 0 <= value <= 1 for value in (x, y)):
+                    raise ValueError(f"Coordenadas de marcador fuera de la captura: {annotations}")
+                numbers.add(number)
+                self.markers.append(marker)
+
+    def draw(self) -> None:
+        canvas = self.canv
+        canvas.saveState()
+        canvas.drawImage(self.image, 0, 0, width=self.width, height=self.height, mask="auto")
+        canvas.setStrokeColor(LINE)
+        canvas.setLineWidth(0.7)
+        canvas.rect(0, 0, self.width, self.height, fill=0, stroke=1)
+        for marker in self.markers:
+            x = marker["x"] * self.width
+            y = (1 - marker["y"]) * self.height
+            canvas.setFillColor(colors.white)
+            canvas.circle(x, y, 11, fill=1, stroke=0)
+            canvas.setFillColor(ACCENT)
+            canvas.circle(x, y, 8.7, fill=1, stroke=0)
+            canvas.setFillColor(colors.white)
+            canvas.setFont(SANS_BOLD, 9)
+            canvas.drawCentredString(x, y - 3, str(marker["number"]))
+        canvas.restoreState()
 
 
 class ManualDocTemplate(BaseDocTemplate):
@@ -54,7 +115,7 @@ class ManualDocTemplate(BaseDocTemplate):
             bottomMargin=20 * mm,
             title="Estudio Interactivo - Manual de uso",
             author="Proyecto Estudio Interactivo",
-            subject="Guia de uso offline, progreso y modulos portables",
+            subject="Guia visual para cargar preguntas, practicar y guardar el progreso",
             invariant=True,
         )
         frame = Frame(
@@ -86,7 +147,7 @@ class ManualDocTemplate(BaseDocTemplate):
             canvas.drawRightString(PAGE_WIDTH - 22 * mm, PAGE_HEIGHT - 11.5 * mm, "MANUAL DE USO")
         canvas.setFillColor(MUTED)
         canvas.setFont(SANS, 8.2)
-        canvas.drawString(22 * mm, 11.5 * mm, "Offline y portable")
+        canvas.drawString(22 * mm, 11.5 * mm, "Tus preguntas. Tu ritmo.")
         canvas.drawRightString(PAGE_WIDTH - 22 * mm, 11.5 * mm, f"{doc.page:02d}")
         canvas.restoreState()
 
@@ -103,24 +164,16 @@ class ManualDocTemplate(BaseDocTemplate):
 def styles() -> dict[str, ParagraphStyle]:
     sample = getSampleStyleSheet()
     return {
-        "CoverTitle": ParagraphStyle(
-            "CoverTitle", parent=sample["Title"], fontName=SERIF, fontSize=31, leading=35,
-            textColor=INK, alignment=TA_LEFT, spaceAfter=8 * mm,
-        ),
         "CoverMeta": ParagraphStyle(
             "CoverMeta", parent=sample["Normal"], fontName=SANS_BOLD, fontSize=11, leading=15,
             textColor=ACCENT, spaceAfter=4 * mm,
         ),
-        "CoverBody": ParagraphStyle(
-            "CoverBody", parent=sample["Normal"], fontName=SANS, fontSize=14, leading=20,
-            textColor=INK, spaceAfter=8 * mm,
-        ),
         "H1": ParagraphStyle(
-            "H1", parent=sample["Heading1"], fontName=SERIF, fontSize=24, leading=28,
-            textColor=INK, spaceBefore=0, spaceAfter=7 * mm, keepWithNext=True,
+            "H1", parent=sample["Heading1"], fontName=SANS_BOLD, fontSize=23, leading=28,
+            textColor=INK, spaceBefore=0, spaceAfter=5 * mm, keepWithNext=True,
         ),
         "H2": ParagraphStyle(
-            "H2", parent=sample["Heading2"], fontName=SERIF, fontSize=18, leading=22,
+            "H2", parent=sample["Heading2"], fontName=SANS_BOLD, fontSize=17, leading=21,
             textColor=INK, spaceBefore=5 * mm, spaceAfter=3 * mm, keepWithNext=True,
         ),
         "H3": ParagraphStyle(
@@ -128,24 +181,28 @@ def styles() -> dict[str, ParagraphStyle]:
             textColor=ACCENT, spaceBefore=4 * mm, spaceAfter=2 * mm, keepWithNext=True,
         ),
         "Body": ParagraphStyle(
-            "Body", parent=sample["BodyText"], fontName=SANS, fontSize=9.5, leading=13.6,
-            textColor=INK, spaceAfter=2.3 * mm, allowWidows=0, allowOrphans=0,
+            "Body", parent=sample["BodyText"], fontName=SANS, fontSize=10.2, leading=14.6,
+            textColor=INK, spaceAfter=2.5 * mm, allowWidows=0, allowOrphans=0,
         ),
         "Bullet": ParagraphStyle(
-            "Bullet", parent=sample["BodyText"], fontName=SANS, fontSize=9.4, leading=13.3,
+            "Bullet", parent=sample["BodyText"], fontName=SANS, fontSize=10.2, leading=14.4,
             textColor=INK, leftIndent=5 * mm, firstLineIndent=-3.5 * mm, bulletIndent=0,
             spaceAfter=1.25 * mm,
         ),
         "Number": ParagraphStyle(
-            "Number", parent=sample["BodyText"], fontName=SANS, fontSize=9.4, leading=13.3,
+            "Number", parent=sample["BodyText"], fontName=SANS, fontSize=10.2, leading=14.4,
             textColor=INK, leftIndent=7 * mm, firstLineIndent=-5 * mm, bulletIndent=0,
             spaceAfter=1.4 * mm,
         ),
         "Callout": ParagraphStyle(
-            "Callout", parent=sample["BodyText"], fontName=SANS, fontSize=9.5, leading=14,
-            textColor=INK, backColor=ACCENT_SOFT, borderColor=ACCENT, borderWidth=1,
+            "Callout", parent=sample["BodyText"], fontName=SANS, fontSize=10.2, leading=14.6,
+            textColor=INK, backColor=ACCENT_SOFT, borderColor=ACCENT_SOFT, borderWidth=1,
             borderPadding=(7, 9, 7, 11), leftIndent=2 * mm, rightIndent=2 * mm,
             spaceBefore=2 * mm, spaceAfter=4 * mm,
+        ),
+        "Caption": ParagraphStyle(
+            "Caption", parent=sample["BodyText"], fontName=SANS, fontSize=8.2, leading=11,
+            textColor=MUTED, alignment=TA_CENTER, spaceBefore=2.5 * mm, spaceAfter=3.5 * mm,
         ),
         "Code": ParagraphStyle(
             "Code", parent=sample["Code"], fontName="Courier", fontSize=8.2, leading=11.5,
@@ -170,6 +227,7 @@ def inline(text: str) -> str:
     value = html.escape(text.strip())
     value = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", value)
     value = re.sub(r"`(.+?)`", r'<font name="Courier" size="8.3">\1</font>', value)
+    value = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2" color="#1a73e8">\1</a>', value)
     return value
 
 
@@ -191,7 +249,7 @@ def table_from(lines: list[str]) -> Table:
         widths = [available / count] * count
     table = Table(rows, colWidths=widths, repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), INK),
+        ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("GRID", (0, 0), (-1, -1), 0.55, LINE),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [PAPER, CANVAS]),
@@ -208,7 +266,7 @@ def build_story(source: str) -> list:
     story: list = []
     paragraph: list[str] = []
     index = 0
-    cover = True
+    first_heading = True
 
     def flush_paragraph() -> None:
         if paragraph:
@@ -225,7 +283,15 @@ def build_story(source: str) -> list:
         if stripped == "<!-- pagebreak -->":
             flush_paragraph()
             story.append(PageBreak())
-            cover = False
+            index += 1
+            continue
+        screenshot = re.fullmatch(r"!\[([^\]]*)\]\(([^)]+)\)", stripped)
+        if screenshot:
+            flush_paragraph()
+            story.append(KeepTogether([
+                AnnotatedScreenshot(screenshot.group(2)),
+                Paragraph(inline(screenshot.group(1)), STYLES["Caption"]),
+            ]))
             index += 1
             continue
         if stripped.startswith("```"):
@@ -249,14 +315,10 @@ def build_story(source: str) -> list:
         if stripped.startswith("# "):
             flush_paragraph()
             title = stripped[2:].strip()
-            if cover:
-                story.extend([
-                    Spacer(1, 28 * mm),
-                    Paragraph("ESTUDIO INTERACTIVO", STYLES["CoverMeta"]),
-                    Paragraph(inline(title), STYLES["CoverTitle"]),
-                ])
-            else:
-                story.append(Paragraph(inline(title), STYLES["H1"]))
+            if first_heading:
+                story.append(Paragraph("ESTUDIO INTERACTIVO · GUÍA VISUAL", STYLES["CoverMeta"]))
+                first_heading = False
+            story.append(Paragraph(inline(title), STYLES["H1"]))
             index += 1
             continue
         if stripped.startswith("## "):
@@ -284,14 +346,6 @@ def build_story(source: str) -> list:
         if ordered:
             flush_paragraph()
             story.append(Paragraph(inline(ordered.group(2)), STYLES["Number"], bulletText=f"{ordered.group(1)}."))
-            index += 1
-            continue
-        if cover:
-            flush_paragraph()
-            style = STYLES["CoverMeta"] if "version" in stripped.lower() else STYLES["CoverBody"]
-            if stripped.startswith("**"):
-                style = STYLES["Callout"]
-            story.append(Paragraph(inline(stripped), style))
             index += 1
             continue
         paragraph.append(stripped)
