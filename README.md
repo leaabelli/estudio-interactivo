@@ -12,7 +12,7 @@ Contiene toda la interfaz, los estilos y la lógica; no descarga código, fuente
 ni otros recursos de la aplicación durante el uso. Las preguntas se cargan
 explícitamente desde un archivo local o, con conexión, desde un enlace HTTPS.
 
-Los demás archivos pertenecen al proyecto de desarrollo o a su documentación:
+Los demás archivos son módulos externos, documentación o archivos de desarrollo:
 
 - `modulo-prueba.study.json`: banco sintético de 48 preguntas para pruebas y
   demostraciones locales, incluido un ejemplo de cada formato visual. Se carga
@@ -22,6 +22,10 @@ Los demás archivos pertenecen al proyecto de desarrollo o a su documentación:
   con capturas numeradas para cargar tests, practicar y guardar el progreso.
   Se genera y verifica como artefacto documental, pero no se publica en GitHub
   Pages.
+- `modulos/`: bancos públicos sin progreso, separados de los documentos de clase.
+  [Información Financiera](modulos/informacion-financiera/README.md) contiene
+  116 ejercicios revisados. Se comparte su enlace Raw; no se incluye en el HTML
+  ni en el deploy de Pages.
 - `src/`, `scripts/` y `tests/`: fuentes, compilación y controles de calidad que
   producen o verifican el HTML; no son dependencias de ejecución.
 
@@ -82,6 +86,11 @@ módulo nuevo debe pasar:
 bun run validate:module -- ruta/al/modulo.study.json
 bun run validate:initial -- ruta/al/modulo.study.json
 ```
+
+La sección **9. Compartí un test por enlace** del
+[manual de usuario](docs/manual-usuario.md) explica cómo publicar un módulo
+limpio en GitHub y obtener su enlace Raw. Los archivos con progreso personal
+no deben publicarse junto a los bancos de preguntas.
 
 ## GitHub Pages
 

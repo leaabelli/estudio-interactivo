@@ -18,7 +18,7 @@ def main() -> None:
         failures.append("el PDF parece incompleto por su tamaño")
 
     reader = PdfReader(str(PDF))
-    if len(reader.pages) != 8:
+    if len(reader.pages) != 9:
         failures.append(f"cantidad de páginas inesperada: {len(reader.pages)}")
     if reader.is_encrypted:
         failures.append("el manual no debe estar cifrado")
@@ -36,9 +36,19 @@ def main() -> None:
         "Guardá y continuá después",
         "Sumá tus propios tests",
         "Usalo desde el celular",
+        "Compartí un test por enlace",
         "Cargar módulo",
+        "Cargar desde enlace",
         "Guardar archivo",
         ".study.json",
+        "repositorio público de GitHub",
+        "modulos/materia/",
+        "Commit changes",
+        "sin progreso",
+        "Por rama:",
+        "Por commit:",
+        "El enlace no sincroniza el progreso",
+        "No subas tus archivos con progreso a GitHub",
     ]:
         if expected not in text:
             failures.append(f"falta contenido de uso: {expected}")
@@ -46,7 +56,16 @@ def main() -> None:
         if technical_detail in text:
             failures.append(f"detalle de desarrollo fuera del manual de uso: {technical_detail}")
 
+    if len(reader.pages) >= 9:
+        creation_page = " ".join((reader.pages[6].extract_text() or "").split())
+        sharing_page = " ".join((reader.pages[8].extract_text() or "").split())
+        if "seguí la página 9" not in creation_page:
+            failures.append("la página 7 no remite a la guía de publicación de la página 9")
+        if "9. Compartí un test por enlace" not in sharing_page:
+            failures.append("la guía de publicación no comienza en la página 9")
+
     image_pages = 0
+    web_links: set[str] = set()
     for page_number, page in enumerate(reader.pages, start=1):
         page_text = page.extract_text() or ""
         if f"{page_number}. " not in page_text:
@@ -69,8 +88,17 @@ def main() -> None:
                     failures.append(f"página {page_number}: acción no permitida")
                 if action.get("/S") == "/URI" and not str(action.get("/URI", "")).startswith(("https://", "http://")):
                     failures.append(f"página {page_number}: enlace no web")
+                if action.get("/S") == "/URI":
+                    web_links.add(str(action.get("/URI", "")))
     if image_pages < 5:
         failures.append(f"faltan capturas de la app: solo {image_pages} páginas ilustradas")
+    example_path = "modulos/informacion-financiera/informacion-financiera-ampliado.study.json"
+    for expected_link in [
+        f"https://github.com/leaabelli/estudio-interactivo/blob/codex/quiz-financiera-ampliado/{example_path}",
+        f"https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/codex/quiz-financiera-ampliado/{example_path}",
+    ]:
+        if expected_link not in web_links:
+            failures.append(f"falta el enlace del ejemplo público: {expected_link}")
 
     raw = PDF.read_bytes()
     if any(token in raw for token in [b"/JavaScript", b"/OpenAction", b"/Launch", b"/EmbeddedFile", b"/RichMedia"]):

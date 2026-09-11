@@ -144,7 +144,7 @@ Compartile a quien lo prepare las [instrucciones para crear tests compatibles](h
 
 Cargalo, revisá la materia y la cantidad de preguntas, y hacé un examen de prueba. Comprobá algunas respuestas contra tus fuentes, sobre todo si usaste IA. Si encontrás una pregunta dudosa, enviá el título y la observación a quien preparó el test.
 
-> Guardá una copia del archivo original sin progreso. Después, usá tus copias actualizadas para continuar estudiando. No necesitás programar ni editar el archivo a mano.
+> Conservá el original sin progreso y usá copias actualizadas para estudiar. Para publicar el test y compartir su enlace, seguí la página 9. No necesitás programar.
 
 <!-- pagebreak -->
 
@@ -164,3 +164,36 @@ Tocá una opción y bajá para avanzar. Deslizá las tablas anchas hacia los cos
 - **Aviso de guardado o de otra pestaña:** guardá un archivo de respaldo y continuá en una sola pestaña.
 
 > La rutina que cuida tu estudio: cargar, practicar, revisar y **Guardar archivo…** antes de cerrar.
+
+<!-- pagebreak -->
+
+# 9. Compartí un test por enlace
+
+Podés publicar el archivo en un **repositorio público de GitHub** que tengas permiso de editar. Quienes reciban su enlace podrán cargarlo en la app sin una cuenta de GitHub. Todo lo que subas a ese repositorio será público.
+
+### Prepará una copia para compartir
+
+Usá el `.study.json` original, validado y **sin progreso**: sin respuestas, resultados ni examen pausado. No uses una copia guardada después de practicar. Si sólo tenés esa copia, pedile a quien preparó el test un archivo inicial limpio.
+
+Separá los tests públicos en una carpeta como `modulos/materia/`, fuera de tus modelos de examen y apuntes privados. Subí **sólo el módulo limpio y documentación que puedas compartir**, como una breve descripción; no los materiales privados usados para crearlo.
+
+### Publicalo desde la web de GitHub
+
+1. Abrí tu repositorio público y elegí la **rama** donde guardarás el test. Una rama identifica una línea de versiones del repositorio.
+2. Si falta la carpeta, elegí **Add file > Create new file**, poné `modulos/materia/README.md` como nombre y escribí una descripción pública del test. Tocá **Commit changes** para guardar esa versión, llamada commit.
+3. Entrá en esa carpeta y elegí **Add file > Upload files**. Seleccioná únicamente el `.study.json` limpio. Revisá los archivos y confirmá **Commit changes**.
+4. Abrí el archivo publicado, tocá **Raw** y copiá la dirección de la barra del navegador. Usá ese enlace para compartir una dirección directa al JSON, en lugar de una página de vista previa.
+5. En Estudio Interactivo, elegí **Cargar desde enlace**, pegá la URL Raw, revisá la vista previa y confirmá **Cargar módulo**. Probalo antes de compartirlo.
+
+### Ejemplo y versión del enlace
+
+En [leaabelli/estudio-interactivo](https://github.com/leaabelli/estudio-interactivo), la rama `codex/quiz-financiera-ampliado` contiene este ejemplo:
+
+`modulos/informacion-financiera/informacion-financiera-ampliado.study.json`
+
+Podés abrir el [archivo en GitHub](https://github.com/leaabelli/estudio-interactivo/blob/codex/quiz-financiera-ampliado/modulos/informacion-financiera/informacion-financiera-ampliado.study.json) o su [enlace Raw para cargar en la app](https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/codex/quiz-financiera-ampliado/modulos/informacion-financiera/informacion-financiera-ampliado.study.json).
+
+- **Por rama:** el enlace del ejemplo apunta a la última versión de ese archivo en la rama. Una nueva carga puede traer cambios posteriores.
+- **Por commit:** para compartir una versión fija, abrí el archivo desde el commit elegido en su historial y copiá su enlace Raw. La dirección incluye el identificador de ese commit, en lugar de la rama.
+
+> El enlace no sincroniza el progreso ni actualiza un módulo ya cargado. Cada persona guarda su avance en su dispositivo con **Guardar archivo…**. No subas tus archivos con progreso a GitHub.
