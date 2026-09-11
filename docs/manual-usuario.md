@@ -187,11 +187,11 @@ Separá los tests públicos en una carpeta como `modulos/materia/`, fuera de tus
 
 ### Ejemplo y versión del enlace
 
-En [leaabelli/estudio-interactivo](https://github.com/leaabelli/estudio-interactivo), la rama `codex/quiz-financiera-ampliado` contiene este ejemplo:
+En [leaabelli/estudio-interactivo](https://github.com/leaabelli/estudio-interactivo), la rama `main` contiene este ejemplo:
 
 `modulos/informacion-financiera/informacion-financiera-ampliado.study.json`
 
-Podés abrir el [archivo en GitHub](https://github.com/leaabelli/estudio-interactivo/blob/codex/quiz-financiera-ampliado/modulos/informacion-financiera/informacion-financiera-ampliado.study.json) o su [enlace Raw para cargar en la app](https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/codex/quiz-financiera-ampliado/modulos/informacion-financiera/informacion-financiera-ampliado.study.json).
+Podés abrir el [archivo en GitHub](https://github.com/leaabelli/estudio-interactivo/blob/main/modulos/informacion-financiera/informacion-financiera-ampliado.study.json) o su [enlace Raw para cargar en la app](https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/main/modulos/informacion-financiera/informacion-financiera-ampliado.study.json).
 
 - **Por rama:** el enlace del ejemplo apunta a la última versión de ese archivo en la rama. Una nueva carga puede traer cambios posteriores.
 - **Por commit:** para compartir una versión fija, abrí el archivo desde el commit elegido en su historial y copiá su enlace Raw. La dirección incluye el identificador de ese commit, en lugar de la rama.

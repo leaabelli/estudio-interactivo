@@ -94,8 +94,8 @@ def main() -> None:
         failures.append(f"faltan capturas de la app: solo {image_pages} páginas ilustradas")
     example_path = "modulos/informacion-financiera/informacion-financiera-ampliado.study.json"
     for expected_link in [
-        f"https://github.com/leaabelli/estudio-interactivo/blob/codex/quiz-financiera-ampliado/{example_path}",
-        f"https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/codex/quiz-financiera-ampliado/{example_path}",
+        f"https://github.com/leaabelli/estudio-interactivo/blob/main/{example_path}",
+        f"https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/main/{example_path}",
     ]:
         if expected_link not in web_links:
             failures.append(f"falta el enlace del ejemplo público: {expected_link}")
