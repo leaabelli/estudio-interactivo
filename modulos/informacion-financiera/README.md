@@ -4,7 +4,7 @@ Banco de **116 preguntas de opción múltiple**, con una sola respuesta correcta
 
 ## Cargar el módulo
 
-Usá [el archivo .study.json](informacion-financiera-ampliado.study.json) o su [enlace directo Raw](https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/codex/quiz-financiera-ampliado/modulos/informacion-financiera/informacion-financiera-ampliado.study.json). En la app, elegí **Cargar desde enlace**, pegá la dirección y confirmá la vista previa: debe indicar 116 preguntas y 0 evaluadas.
+Usá [el archivo .study.json](informacion-financiera-ampliado.study.json) o su [enlace directo Raw](https://raw.githubusercontent.com/leaabelli/estudio-interactivo/refs/heads/main/modulos/informacion-financiera/informacion-financiera-ampliado.study.json). En la app, elegí **Cargar desde enlace**, pegá la dirección y confirmá la vista previa: debe indicar 116 preguntas y 0 evaluadas.
 
 Este es un módulo nuevo, sin respuestas, exámenes ni progreso previo. No reemplaza ni modifica los archivos anteriores. Para conservar tu avance, usá **Guardar archivo…** y guardá esa copia de forma privada. GitHub no recibe ni sincroniza tus respuestas.
 
