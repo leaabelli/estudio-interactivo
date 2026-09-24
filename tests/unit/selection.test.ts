@@ -3,7 +3,8 @@ import {
   InsufficientQuestionsError,
   countEligible,
   countEligibleByDifficulty,
-  selectQuestions
+  selectQuestions,
+  selectionWeight
 } from "../../src/domain/selection";
 import type { Difficulty, SelectionRequest } from "../../src/domain/types";
 import { makeQuestion, makeQuestions, makeSnapshot, progress } from "./fixtures";
@@ -83,23 +84,71 @@ describe("selection", () => {
     ).toThrow("must accept every eligible");
   });
 
-  test("prioritizes unseen, then last incorrect, then least attempts", () => {
+  test("review pools are randomized, not a fixed priority sweep", () => {
     const snapshot = makeSnapshot(
-      Array.from({ length: 12 }, (_, index) => makeQuestion(`q${String(index).padStart(2, "0")}`))
+      Array.from({ length: 40 }, (_, index) => makeQuestion(`q${String(index).padStart(2, "0")}`))
     );
-    snapshot.progress.questions.q00 = progress({ attempts: 5, lastResult: "incorrect" });
-    snapshot.progress.questions.q01 = progress({ attempts: 1, lastResult: "incorrect" });
-    snapshot.progress.questions.q02 = progress({ attempts: 1, correct: 1, lastResult: "correct" });
-    snapshot.progress.questions.q03 = progress({ attempts: 2, correct: 2, lastResult: "correct" });
+    for (let index = 0; index < 20; index += 1) {
+      snapshot.progress.questions[`q${String(index).padStart(2, "0")}`] = progress({
+        attempts: 1,
+        correct: 1,
+        lastResult: "correct"
+      });
+    }
+    const selections = new Set<string>();
+    let masteredDraws = 0;
+    for (let seed = 0; seed < 200; seed += 1) {
+      const ids = selectQuestions(snapshot, {
+        ...baseRequest,
+        difficulty: "facil",
+        population: "todas",
+        seed
+      }).map(({ id }) => id);
+      selections.add([...ids].sort().join(","));
+      masteredDraws += ids.filter((id) => Number(id.slice(1)) < 20).length;
+    }
+    // Many different exams, unseen favored, mastered still reappearing.
+    expect(selections.size).toBeGreaterThan(150);
+    expect(masteredDraws).toBeGreaterThan(0);
+    expect(masteredDraws).toBeLessThan(200 * 10 * 0.4);
+  });
 
+  test("weights favor failed and unseen questions and rest recently answered ones", () => {
+    expect(selectionWeight(undefined, [])).toBe(3);
+    const failed = progress({ lastCompletedStateRevision: 1 });
+    expect(selectionWeight(failed, [5, 9])).toBe(4);
+    expect(selectionWeight(failed, [1])).toBe(2);
+    const mastered = progress({ correct: 1, lastResult: "correct", lastCompletedStateRevision: 9 });
+    expect(selectionWeight(mastered, [5, 9])).toBeCloseTo(0.2);
+    expect(selectionWeight(mastered, [])).toBeCloseTo(1);
+    expect(selectionWeight({ ...mastered, lastCompletedStateRevision: null }, [5, 9])).toBeCloseTo(1);
+  });
+
+  test("failed pool returns only questions whose latest answer was incorrect", () => {
+    const snapshot = makeSnapshot(makeQuestions(12));
+    snapshot.progress.questions["facil.01"] = progress();
+    snapshot.progress.questions["medio.02"] = progress();
+    snapshot.progress.questions["dificil.03"] = progress({ correct: 1, lastResult: "correct" });
+    expect(countEligible(snapshot, "mixta", "falladas")).toBe(2);
+    expect(countEligible(snapshot, "medio", "falladas")).toBe(1);
     const selected = selectQuestions(snapshot, {
       ...baseRequest,
-      difficulty: "facil",
-      population: "todas"
+      population: "falladas",
+      acceptedSize: 2
     });
-    const ids = selected.map((question) => question.id);
-    expect(ids.slice(0, 8).every((id) => !["q00", "q01", "q02", "q03"].includes(id))).toBe(true);
-    expect(ids.slice(8)).toEqual(["q01", "q00"]);
+    expect(selected.map(({ id }) => id).sort()).toEqual(["facil.01", "medio.02"]);
+  });
+
+  test("explicit question IDs restrict the pool", () => {
+    const snapshot = makeSnapshot(makeQuestions(12));
+    const questionIds = ["facil.04", "experto.07", "medio.11"];
+    const selected = selectQuestions(snapshot, {
+      ...baseRequest,
+      population: "todas",
+      acceptedSize: 3,
+      questionIds
+    });
+    expect(selected.map(({ id }) => id).sort()).toEqual([...questionIds].sort());
   });
 
   test("new-only never returns evaluated questions", () => {

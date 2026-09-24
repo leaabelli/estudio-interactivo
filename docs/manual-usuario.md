@@ -19,21 +19,22 @@ El archivo local funciona sin internet; el enlace requiere conexión al cargar. 
 
 # 2. Prepará un examen
 
-Entrá a **Estudiar**. Cada examen tiene 10 preguntas y vos elegís cómo practicar.
+Entrá a **Estudiar**. Arriba, la app te sugiere qué hacer según tus resultados. Cada examen tiene hasta 10 preguntas.
 
-![Configuración del examen: dificultad, banco de preguntas y botón para comenzar.](images/manual/02-preparar.png)
+![Tu próximo paso: la recomendación resaltada, el botón para empezar y tu última nota.](images/manual/02-preparar.png)
 
-1. **Dificultad.** Elegí Fácil, Medio, Difícil o Experto. Para mezclar niveles, usá **Aleatoria**.
-2. **Banco de preguntas.** Elegí **Solo nuevas** para recorrer material que todavía no entregaste, o **Todas: nuevas y evaluadas** para incluir repaso.
-3. Tocá **Comenzar examen de 10 preguntas**. Debajo del botón podés ver cuántas preguntas cumplen tus filtros.
+1. **Tu próximo paso.** Si recién empezás, un diagnóstico. Después, repasar lo que fallaste, reforzar tu tema más flojo o seguir con preguntas nuevas.
+2. Tocá el **botón azul** para empezar ese examen.
+3. Si preferís otra cosa, tocá la **alternativa** que aparece al lado.
+4. En la franja azul ves tu **última nota**, tu promedio reciente y cuántas preguntas tenés para repasar.
 
-### ¿Con qué conviene empezar?
+### Armá tu examen
 
-Probá **Fácil + Solo nuevas** para entrar en tema. Después subí la dificultad o usá **Aleatoria**. Si querés reforzar contenidos, cambiá a **Todas: nuevas y evaluadas**: pueden salir preguntas nuevas o repetidas, no solo las que contestaste mal.
+Más abajo elegís vos. **Dificultad:** Fácil, Medio, Difícil, Experto o **Aleatoria**. **¿Qué querés practicar?:** **Nuevas** (nunca respondidas), **Falladas** (las que respondiste mal la última vez) o **Práctica inteligente**, que mezcla todo y prioriza lo que más te cuesta.
 
 ### Si quedan pocas preguntas
 
-La app te avisa cuando no alcanza para 10. Podés cambiar los filtros o aceptar un examen más corto, si hay preguntas disponibles. Si no queda ninguna nueva, elegí otro nivel o incluí las ya evaluadas.
+La app te avisa cuando no alcanza para 10. Podés cambiar los filtros o aceptar un examen más corto. Si no queda ninguna nueva, elegí otro nivel o usá **Práctica inteligente**.
 
 > Una pregunta cuenta como evaluada cuando entregás el examen, aunque la respuesta sea incorrecta. Mirarla o dejarla en un examen pausado todavía no aumenta la cobertura.
 
@@ -74,7 +75,7 @@ Las tablas, imágenes y diagramas vuelven a aparecer en la corrección. Las fuen
 
 ### ¿Y ahora?
 
-Si hubo varios errores, repasá primero sus explicaciones y el material citado. Si querés seguir practicando, tocá **Nuevo examen**. Para ver cómo se suma este intento a los anteriores, tocá **Ver progreso**.
+Si hubo errores, leé sus explicaciones y tocá **Practicar estos errores**: arma un examen solo con esas preguntas. Con **Solo errores** ocultás las que acertaste. Para seguir con otra cosa, tocá **Nuevo examen** o **Ver progreso**.
 
 > Repetir preguntas también sirve: puede mejorar tus aciertos aunque no aumente la cobertura. La cobertura solo crece cuando entregás preguntas que nunca habías evaluado.
 
@@ -82,17 +83,17 @@ Si hubo varios errores, repasá primero sus explicaciones y el material citado. 
 
 # 5. Mirá cómo venís
 
-Entrá a **Progreso** para ver el conjunto de tus exámenes. No te quedes con un solo porcentaje: cada indicador responde una pregunta distinta.
+Entrá a **Progreso** para ver tu tablero. Cada indicador responde una pregunta distinta.
 
-![Panel de progreso: cobertura del banco, precisión de tus respuestas y gráficos por dificultad.](images/manual/05-progreso.png)
+![Tablero de progreso: tu nota, su evolución y los indicadores principales.](images/manual/05-progreso.png)
 
-1. **Cobertura:** ¿cuánto del banco recorriste? Si evaluaste 20 preguntas distintas de un banco de 100, tenés 20 % de cobertura.
-2. **Precisión:** ¿cuánto acertás? Si acertaste 7 de 10 respuestas entregadas, tu precisión es 70 %. Los siguientes exámenes también cuentan en este porcentaje.
-3. **Por dificultad:** ¿qué niveles te faltan recorrer? Compará las barras y los aciertos para decidir qué practicar después.
+1. **Tu nota:** la del último examen, sobre 10, con la flecha que indica si subió o bajó. Debajo, tu promedio reciente y tu mejor nota.
+2. **Evolución de la nota:** cada punto es un examen; la línea punteada, el promedio de los últimos cinco. Tocá un punto para ver en qué fallaste.
+3. **Para repasar:** cuántas preguntas respondiste mal la última vez. **Repasar** arma un examen con ellas.
 
-**Último resultado correcto** muestra qué parte del banco tiene un acierto como resultado más reciente. No es una nota de la materia: todavía puede haber preguntas sin practicar.
+**Nivel actual** muestra cuánto de lo que ya viste respondiste bien la última vez. **Cobertura** muestra cuánto del banco recorriste.
 
-Más abajo encontrás la evolución de los últimos exámenes y el historial. Las barras muestran los aciertos de cada examen; la línea, cuánto del banco llevabas evaluado al terminarlo.
+Más abajo están tus temas, del más flojo al más firme (los resaltados dicen **Empezá por acá**), la lista de lo que fallaste y el historial: tocá un examen para revisar sus errores.
 
 > Mucha cobertura y pocos aciertos: dedicá tiempo al repaso. Muchos aciertos y poca cobertura: seguí con preguntas nuevas antes de sacar conclusiones sobre toda la materia.
 

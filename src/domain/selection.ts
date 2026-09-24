@@ -2,13 +2,13 @@ import {
   DIFFICULTIES,
   type Difficulty,
   type DifficultyFilter,
-  type Population,
   type QuestionProgress,
+  type SelectionPopulation,
   type SelectionRequest,
   type StudyQuestion,
   type StudySnapshot
 } from "./types";
-import { deterministicShuffle, fnv1aUtf8 } from "./rng";
+import { deterministicShuffle, fisherYates, fnv1aUtf8, mulberry32 } from "./rng";
 
 const MIXED_TARGETS: Readonly<Record<Difficulty, number>> = {
   facil: 3,
@@ -21,13 +21,13 @@ export class InsufficientQuestionsError extends Error {
   readonly eligibleCount: number;
   readonly requestedCount: number;
   readonly difficulty: DifficultyFilter;
-  readonly population: Population;
+  readonly population: SelectionPopulation;
 
   constructor(
     eligibleCount: number,
     requestedCount: number,
     difficulty: DifficultyFilter,
-    population: Population
+    population: SelectionPopulation
   ) {
     super(`Only ${eligibleCount} questions are eligible; ${requestedCount} were requested.`);
     this.name = "InsufficientQuestionsError";
@@ -52,22 +52,35 @@ function matchesDifficulty(question: StudyQuestion, difficulty: DifficultyFilter
   return difficulty === "mixta" || question.difficulty === difficulty;
 }
 
+function matchesPopulation(
+  snapshot: StudySnapshot,
+  question: StudyQuestion,
+  population: SelectionPopulation
+): boolean {
+  if (population === "todas") return true;
+  if (population === "nuevas") return attemptsFor(snapshot, question.id) === 0;
+  const progress = ownProgress(snapshot, question.id);
+  return Boolean(progress && progress.attempts > 0 && progress.lastResult === "incorrect");
+}
+
 function isEligible(
   snapshot: StudySnapshot,
   question: StudyQuestion,
   difficulty: DifficultyFilter,
-  population: Population
+  population: SelectionPopulation,
+  questionIds?: ReadonlySet<string>
 ): boolean {
   return (
+    (!questionIds || questionIds.has(question.id)) &&
     matchesDifficulty(question, difficulty) &&
-    (population === "todas" || attemptsFor(snapshot, question.id) === 0)
+    matchesPopulation(snapshot, question, population)
   );
 }
 
 export function countEligible(
   snapshot: StudySnapshot,
   difficulty: DifficultyFilter,
-  population: Population
+  population: SelectionPopulation
 ): number {
   let count = 0;
   for (const question of snapshot.questions) {
@@ -78,45 +91,64 @@ export function countEligible(
   return count;
 }
 
-function priorityGroup(progress: QuestionProgress | undefined): number {
-  if (!progress || progress.attempts === 0) {
-    return 0;
+/** Detailed exams completed since the question was last answered; unknown counts as long ago. */
+function examsSince(progress: QuestionProgress, completedRevisions: readonly number[]): number {
+  const last = progress.lastCompletedStateRevision;
+  if (last === null || completedRevisions.length === 0) return Number.POSITIVE_INFINITY;
+  let count = 0;
+  for (let index = completedRevisions.length - 1; index >= 0; index -= 1) {
+    if ((completedRevisions[index] as number) <= last) break;
+    count += 1;
   }
-  return progress.lastResult === "incorrect" ? 1 : 2;
+  return count;
+}
+
+/**
+ * Relative chance of a question being drawn. Unseen and failed questions are
+ * favored, questions answered in the latest exams rest for a while, and
+ * mastered questions keep a small share so they still come back for review.
+ */
+export function selectionWeight(
+  progress: QuestionProgress | undefined,
+  completedRevisions: readonly number[]
+): number {
+  if (!progress || progress.attempts === 0) return 3;
+  const since = examsSince(progress, completedRevisions);
+  if (progress.lastResult === "incorrect") {
+    return 4 * Math.min(1, 0.5 + 0.25 * since);
+  }
+  const errorRate = 1 - progress.correct / progress.attempts;
+  return (1 + errorRate) * Math.min(1, 0.2 + 0.2 * since);
 }
 
 function rankedPool(
   snapshot: StudySnapshot,
   questions: readonly StudyQuestion[],
-  population: Population,
+  population: SelectionPopulation,
   seed: number,
   salt: string
 ): StudyQuestion[] {
   const byId = [...questions].sort((left, right) =>
     left.id < right.id ? -1 : left.id > right.id ? 1 : 0
   );
-  const shuffled = deterministicShuffle(byId, (seed ^ fnv1aUtf8(salt)) >>> 0);
-  const shuffledRank = new Map(shuffled.map((question, index) => [question.id, index]));
+  const random = mulberry32((seed ^ fnv1aUtf8(salt)) >>> 0);
 
   if (population === "nuevas") {
-    return shuffled;
+    return fisherYates(byId, random);
   }
 
-  return [...byId].sort((left, right) => {
-    const leftProgress = ownProgress(snapshot, left.id);
-    const rightProgress = ownProgress(snapshot, right.id);
-    const groupDelta = priorityGroup(leftProgress) - priorityGroup(rightProgress);
-    if (groupDelta !== 0) {
-      return groupDelta;
-    }
-
-    const attemptsDelta = (leftProgress?.attempts ?? 0) - (rightProgress?.attempts ?? 0);
-    if (attemptsDelta !== 0) {
-      return attemptsDelta;
-    }
-
-    return (shuffledRank.get(left.id) ?? 0) - (shuffledRank.get(right.id) ?? 0);
+  // Weighted sampling without replacement (Efraimidis-Spirakis): sorting by
+  // log(u) / w keeps every question possible while favoring heavier weights.
+  const completedRevisions = snapshot.progress.runs
+    .map((run) => run.completedStateRevision)
+    .sort((left, right) => left - right);
+  const keyed = byId.map((question) => {
+    const weight = selectionWeight(ownProgress(snapshot, question.id), completedRevisions);
+    const draw = Math.max(random(), Number.MIN_VALUE);
+    return { question, key: Math.log(draw) / weight };
   });
+  keyed.sort((left, right) => right.key - left.key);
+  return keyed.map(({ question }) => question);
 }
 
 function selectedSize(request: SelectionRequest, eligibleCount: number): number {
@@ -154,7 +186,10 @@ function fixedSelection(
     request.seed,
     `selection.${request.difficulty}`
   );
-  return ranked.slice(0, size);
+  return deterministicShuffle(
+    ranked.slice(0, size),
+    (request.seed ^ fnv1aUtf8("selection.question-order")) >>> 0
+  );
 }
 
 function mixedSelection(
@@ -226,8 +261,9 @@ export function selectQuestions(
     throw new RangeError("seed must be an unsigned 32-bit integer.");
   }
 
+  const questionIds = request.questionIds ? new Set(request.questionIds) : undefined;
   const eligible = snapshot.questions.filter((question) =>
-    isEligible(snapshot, question, request.difficulty, request.population)
+    isEligible(snapshot, question, request.difficulty, request.population, questionIds)
   );
   const size = selectedSize(request, eligible.length);
 
@@ -245,7 +281,7 @@ export function selectQuestions(
 
 export function countEligibleByDifficulty(
   snapshot: StudySnapshot,
-  population: Population
+  population: SelectionPopulation
 ): Record<Difficulty, number> {
   return {
     facil: countEligible(snapshot, "facil", population),

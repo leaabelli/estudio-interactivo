@@ -106,7 +106,9 @@ export function createActiveRun(
     seed: request.seed >>> 0,
     filters: {
       difficulty: request.difficulty,
-      population: request.population,
+      // "falladas" and explicit ID pools are subsets of "todas"; persisting only
+      // the original enum keeps files compatible with every app version.
+      population: request.population === "nuevas" && !request.questionIds ? "nuevas" : "todas",
       requestedSize: 10,
       acceptedSize: selected.length
     },

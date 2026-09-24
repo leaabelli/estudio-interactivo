@@ -2,6 +2,11 @@ export const DIFFICULTIES = ["facil", "medio", "dificil", "experto"] as const;
 export type Difficulty = (typeof DIFFICULTIES)[number];
 export type DifficultyFilter = Difficulty | "mixta";
 export type Population = "nuevas" | "todas";
+/**
+ * Pools a run can be drawn from. "falladas" is selection-only: it is stored in
+ * run filters as "todas" so files stay readable by every app version.
+ */
+export type SelectionPopulation = Population | "falladas";
 
 export interface StudyOption {
   id: string;
@@ -143,10 +148,12 @@ export interface StudySnapshot {
 
 export interface SelectionRequest {
   difficulty: DifficultyFilter;
-  population: Population;
+  population: SelectionPopulation;
   requestedSize: 10;
   acceptedSize?: number;
   seed: number;
+  /** Restricts the pool to these question IDs (for example, one exam's mistakes). */
+  questionIds?: readonly string[];
 }
 
 export interface StudyMetrics {

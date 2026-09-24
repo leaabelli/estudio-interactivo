@@ -10,8 +10,13 @@ of reloaded pages.
 
 - The application shell stays mounted. Only the route outlet or question stage
   changes after an intentional navigation.
-- Coverage is the primary progress signal. Accuracy and the latest-result metric
-  remain separate and are never presented as the same concept.
+- Estudiar opens with one recommended next step (diagnostic, review mistakes,
+  reinforce the weakest topic, new questions, or a smart mix) and a single
+  primary action. The grade per exam (out of 10) is the headline progress
+  signal; coverage and current level stay separate and are never conflated.
+- The highlighter (`--highlighter: #FFE16B`) is the one signature accent. It
+  marks only what to do next and where to start; never decoration.
+- Every past exam can be reopened to review its mistakes and practice them.
 - Transient success feedback uses a fixed snackbar, so ordinary actions never
   push the page down. Persistent warnings remain visible in a banner.
 - Every chart has an equivalent textual value. Difficulty never relies on color

@@ -2,8 +2,8 @@ import type {
   CompletedRun,
   Difficulty,
   DifficultyFilter,
-  Population,
   QuestionContentBlock,
+  SelectionPopulation,
   StudyAnswer,
   StudyQuestion,
   StudySnapshot,
@@ -20,6 +20,17 @@ import {
 import { countEligible } from "../domain/selection";
 import { deriveMetrics } from "../domain/metrics";
 import {
+  buildExamHistory,
+  deriveInsights,
+  incorrectItemIds,
+  recommendNextSteps,
+  runScorePercent,
+  type NextStep,
+  type ExamPoint,
+  type StudyInsights,
+  type TopicInsight,
+} from "../domain/insights";
+import {
   RecoveryNotFoundError,
   RecoveryReplacementRequiredError,
   RecoveryWriteConflictError,
@@ -35,7 +46,6 @@ import {
 import { validateSnapshot } from "../domain/validation";
 import { readRemoteSnapshot } from "../adapters/remote-modules";
 import {
-  buildRunTrend,
   clampPercent,
   completedRunBelongsToSnapshot,
   createRelativeNavigationAction,
@@ -221,7 +231,26 @@ function button(label: string, className: string, action: () => void | Promise<v
 }
 
 function percent(value: number): string {
-  return `${value.toFixed(1).replace(".0", "")}%`;
+  return `${Math.round(value)}%`;
+}
+
+function formatGrade(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, "").replace(".", ",");
+}
+
+/** Score percent as an Argentine-style grade out of 10. */
+function grade(scorePercent: number): string {
+  return formatGrade(Math.round(scorePercent) / 10);
+}
+
+function gradeTone(scorePercent: number): "high" | "mid" | "low" {
+  return scorePercent >= 70 ? "high" : scorePercent >= 40 ? "mid" : "low";
+}
+
+function randomSeed(): number {
+  return globalThis.crypto?.getRandomValues
+    ? globalThis.crypto.getRandomValues(new Uint32Array(1))[0] ?? 1
+    : (Date.now() >>> 0) || 1;
 }
 
 function difficultyLabel(value: Difficulty | DifficultyFilter): string {
@@ -270,7 +299,9 @@ class Application {
   private recoveries: RecoveryLike[] = [];
   private view: View = "empty";
   private difficulty: DifficultyFilter = "mixta";
-  private population: Population = "nuevas";
+  private population: SelectionPopulation = "nuevas";
+  private resultFilter: "all" | "incorrect" = "all";
+  private resultFromHistory = false;
   private notice: NoticeState | null = null;
   private resultRun: CompletedRun | null = null;
   private volatile = false;
@@ -684,7 +715,7 @@ class Application {
   private renderStudy(): HTMLElement {
     const snapshot = this.snapshot!;
     const wrapper = node("div", { className: "route-panel study-route" },
-      this.pageHeader("Estudiar", "Elegí la dificultad y decidí si querés preguntas nuevas o repasar las anteriores.", "PRÁCTICA"),
+      this.pageHeader("Estudiar", "Seguí el paso recomendado o armá tu propio examen.", "PRÁCTICA"),
     );
     if (snapshot.progress.activeRun) {
       const run = snapshot.progress.activeRun;
@@ -704,32 +735,7 @@ class Application {
       return wrapper;
     }
 
-    const metrics = deriveMetrics(snapshot);
-    wrapper.append(node("section", { className: "overview-grid", attrs: { "aria-label": "Resumen de progreso" } },
-      node("article", { className: "coverage-card" },
-        this.renderPercentRing(metrics.coveragePercent, "evaluado", `${metrics.evaluatedQuestions}/${metrics.totalQuestions}`),
-        node("div", { className: "coverage-copy" },
-          node("p", { className: "eyebrow", text: "COBERTURA TOTAL" }),
-          node("h2", { text: metrics.evaluatedQuestions ? "Tu banco ya está en movimiento" : "Todo listo para empezar" }),
-          node("p", { text: `${metrics.evaluatedQuestions} de ${metrics.totalQuestions} preguntas evaluadas al menos una vez.` }),
-          button("Ver progreso", "text-button", () => this.setView("progress")),
-        ),
-      ),
-      node("div", { className: "metric-card-grid" },
-        this.renderMetricCard(
-          "Precisión",
-          metrics.accuracyPercent === null ? "—" : percent(metrics.accuracyPercent),
-          metrics.accuracyPercent === null ? "Todavía no hay intentos" : `${metrics.correctCount} de ${metrics.attemptCount} intentos correctos`,
-          "primary",
-        ),
-        this.renderMetricCard(
-          "Último resultado correcto",
-          percent(metrics.masteryPercent),
-          `${metrics.masteredQuestions} preguntas con último intento correcto`,
-          "success",
-        ),
-      ),
-    ));
+    wrapper.append(this.renderCoach(snapshot));
 
     const difficultySelect = node("select", {
       attrs: { id: "difficulty" },
@@ -740,14 +746,22 @@ class Application {
       option.selected = value === this.difficulty;
       difficultySelect.append(option);
     }
-    const populationSelect = node("select", {
-      attrs: { id: "population" },
-      on: { change: (event) => { this.population = (event.currentTarget as HTMLSelectElement).value as Population; this.syncStudyRoute(); } },
-    });
-    for (const [value, label] of [["nuevas", "Solo nuevas"], ["todas", "Todas: nuevas y evaluadas"]] as Array<[Population, string]>) {
-      const option = node("option", { text: label, attrs: { value } });
-      option.selected = value === this.population;
-      populationSelect.append(option);
+    const populationGroup = node("div", { className: "segmented", attrs: { role: "radiogroup", "aria-labelledby": "population-label" } });
+    for (const [value, label, hint] of [
+      ["nuevas", "Nuevas", "Preguntas que nunca respondiste"],
+      ["falladas", "Falladas", "Las que respondiste mal la última vez"],
+      ["todas", "Práctica inteligente", "Mezcla todo: prioriza nuevas y falladas, y deja descansar lo reciente"],
+    ] as Array<[SelectionPopulation, string, string]>) {
+      const input = node("input", {
+        attrs: { type: "radio", name: "population", value },
+        on: { change: () => { this.population = value; this.syncStudyRoute(); } },
+      });
+      input.checked = value === this.population;
+      populationGroup.append(node("label", { className: "segment", attrs: { title: hint } },
+        input,
+        node("span", { className: "segment-label", text: label }),
+        node("small", { className: "segment-count", data: { population: value }, text: String(countEligible(snapshot, this.difficulty, value)) }),
+      ));
     }
     const eligible = countEligible(snapshot, this.difficulty, this.population);
     const startButton = button(
@@ -759,12 +773,12 @@ class Application {
     startButton.disabled = this.busy || this.stale;
     wrapper.append(node("section", { className: "setup-panel" },
       node("div", { className: "section-heading" },
-        node("div", {}, node("p", { className: "eyebrow", text: "NUEVO EXAMEN" }), node("h2", { text: "Prepará un examen modelo" })),
+        node("div", {}, node("p", { className: "eyebrow", text: "A TU MANERA" }), node("h2", { text: "Armá tu examen" })),
         node("span", { className: "question-count-chip", text: "10 preguntas" }),
       ),
       node("div", { className: "exam-setup" },
         node("div", { className: "field" }, node("label", { text: "Dificultad", attrs: { for: "difficulty" } }), difficultySelect),
-        node("div", { className: "field" }, node("label", { text: "Banco de preguntas", attrs: { for: "population" } }), populationSelect),
+        node("div", { className: "field field-wide" }, node("span", { className: "field-label", text: "¿Qué querés practicar?", attrs: { id: "population-label" } }), populationGroup),
         node("div", { className: "start" },
           startButton,
           node("p", { className: "eligible", data: { role: "eligible" }, attrs: { role: "status", "aria-live": "polite" }, text: `${eligible} disponibles con estos filtros` }),
@@ -780,8 +794,12 @@ class Application {
     if (!outlet || !snapshot || snapshot.progress.activeRun) return;
     const difficultySelect = outlet.querySelector<HTMLSelectElement>("#difficulty");
     if (difficultySelect) difficultySelect.value = this.difficulty;
-    const populationSelect = outlet.querySelector<HTMLSelectElement>("#population");
-    if (populationSelect) populationSelect.value = this.population;
+    for (const input of outlet.querySelectorAll<HTMLInputElement>("input[name=population]")) {
+      input.checked = input.value === this.population;
+    }
+    for (const count of outlet.querySelectorAll<HTMLElement>("[data-population]")) {
+      count.textContent = String(countEligible(snapshot, this.difficulty, count.dataset.population as SelectionPopulation));
+    }
     const eligible = countEligible(snapshot, this.difficulty, this.population);
     const copy = outlet.querySelector<HTMLElement>("[data-role=eligible]");
     if (copy) copy.textContent = `${eligible} disponibles con estos filtros`;
@@ -1097,46 +1115,433 @@ class Application {
 
   private renderProgress(): HTMLElement {
     const snapshot = this.snapshot!;
-    const metrics = deriveMetrics(snapshot);
-    const runCount = snapshot.progress.priorRunSummary.runCount + snapshot.progress.runs.length;
+    const insights = deriveInsights(snapshot);
+    const history = buildExamHistory(snapshot);
     const wrapper = node("div", { className: "route-panel progress-route" },
-      this.pageHeader("Progreso", "Cobertura, precisión y evolución se muestran por separado para que cada señal sea clara.", "ANÁLISIS"),
-      node("section", { className: "progress-summary", attrs: { "aria-label": "Resumen general" } },
-        node("article", { className: "coverage-card compact-card" },
-          this.renderPercentRing(metrics.coveragePercent, "evaluado", `${metrics.evaluatedQuestions}/${metrics.totalQuestions}`),
-          node("div", { className: "coverage-copy" }, node("h2", { text: "Cobertura" }), node("p", { text: `${metrics.evaluatedQuestions} preguntas vistas de ${metrics.totalQuestions}.` })),
-        ),
-        this.renderMetricCard("Precisión", metrics.accuracyPercent === null ? "—" : percent(metrics.accuracyPercent), metrics.accuracyPercent === null ? "Sin intentos todavía" : `${metrics.correctCount} correctas de ${metrics.attemptCount}`, "primary"),
-        this.renderMetricCard("Último resultado correcto", percent(metrics.masteryPercent), `${metrics.masteredQuestions} de ${metrics.totalQuestions} preguntas`, "success"),
-        this.renderMetricCard("Exámenes", String(runCount), `${snapshot.progress.runs.length} con detalle disponible`, "neutral"),
-      ),
-      node("section", { className: "chart-card" },
-        node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "COBERTURA" }), node("h2", { text: "Por dificultad" }))),
-        this.renderDifficultyBars(),
-      ),
-      this.renderRunTrendChart(),
+      this.pageHeader("Progreso", "Cómo viene tu nota, qué temas flojean y qué conviene repasar.", "TU TABLERO"),
+      this.renderScoreHero(insights, history),
+      this.renderKpiRow(insights),
     );
-
-    const history = node("ol", { className: "history-list" });
-    const runs = [...snapshot.progress.runs].reverse().slice(0, 25);
-    if (!runs.length) {
-      wrapper.append(node("section", { className: "empty-state" }, node("h2", { text: "Tu historial empieza con el primer examen" }), node("p", { text: "Cuando entregues un examen, vas a ver su resultado y cuánto avanzaste." }), button("Ir a Estudiar", "primary", () => this.setView("study"))));
+    if (!history.length) {
+      wrapper.append(node("section", { className: "empty-state" }, node("h2", { text: "Tu tablero arranca con el primer examen" }), node("p", { text: "Cuando entregues un examen vas a ver tu nota, su evolución y en qué te equivocaste." }), button("Ir a Estudiar", "primary", () => this.setView("study"))));
       return wrapper;
     }
-    for (const run of runs) history.append(node("li", { className: "history-item" },
-      node("span", { className: "history-score", text: `${run.correctCount}/${run.items.length}` }),
-      node("div", { className: "history-copy" },
-        node("strong", { text: `${percent(scorePercent(run.correctCount, run.items.length))} de precisión` }),
-        node("span", { text: `${difficultyLabel(run.filters.difficulty)} · ${formatDate(run.submittedAt)}` }),
+    wrapper.append(
+      node("div", { className: "dash-columns" },
+        this.renderTopicMap(insights.topics),
+        this.renderFailedPanel(insights),
       ),
-      node("span", { className: "coverage-gain", text: `+${run.coverageAfterCount - run.coverageBeforeCount} nuevas` }),
-    ));
-    wrapper.append(node("section", { className: "history-section" },
-      node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "ACTIVIDAD" }), node("h2", { text: "Historial reciente" }))),
-      history,
-      snapshot.progress.priorRunSummary.runCount ? node("p", { text: `${snapshot.progress.priorRunSummary.runCount} exámenes anteriores están resumidos para mantener el archivo liviano.` }) : null,
-    ));
+      node("section", { className: "chart-card" },
+        node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "DIFICULTAD" }), node("h2", { text: "Cobertura y nivel por dificultad" }))),
+        this.renderDifficultyBars(),
+      ),
+      this.renderHistory(history),
+    );
     return wrapper;
+  }
+
+  private renderHistory(history: ExamPoint[]): HTMLElement {
+    const snapshot = this.snapshot!;
+    const list = node("ol", { className: "history-list" });
+    for (const point of [...history].reverse().slice(0, 30)) {
+      const { run } = point;
+      const gain = run.coverageAfterCount - run.coverageBeforeCount;
+      list.append(node("li", {}, node("button", {
+        className: "history-item",
+        attrs: { type: "button", "aria-label": `Ver examen ${point.examNumber}: nota ${grade(point.scorePercent)}, ${run.incorrectCount} errores` },
+        on: { click: () => this.openRun(run) },
+      },
+      node("span", { className: `history-score ${gradeTone(point.scorePercent)}` }, node("strong", { text: grade(point.scorePercent) }), node("small", { text: "/10" })),
+      node("span", { className: "history-copy" },
+        node("strong", { text: `Examen #${point.examNumber} · ${run.correctCount}/${run.items.length} correctas` }),
+        node("span", { text: `${difficultyLabel(run.filters.difficulty)} · ${formatDate(run.submittedAt)}${gain ? ` · +${gain} nuevas` : ""}` }),
+        this.renderMeter(point.scorePercent),
+      ),
+      node("span", { className: run.incorrectCount ? "history-errors" : "history-errors none", text: run.incorrectCount ? `Ver ${run.incorrectCount} ${run.incorrectCount === 1 ? "error" : "errores"} →` : "Perfecto ✓" }),
+      )));
+    }
+    return node("section", { className: "history-section" },
+      node("div", { className: "section-heading" },
+        node("div", {}, node("p", { className: "eyebrow", text: "HISTORIAL" }), node("h2", { text: "Tus exámenes" })),
+        node("span", { className: "question-count-chip", text: "Tocá uno para ver en qué fallaste" }),
+      ),
+      list,
+      snapshot.progress.priorRunSummary.runCount ? node("p", { className: "supporting", text: `${snapshot.progress.priorRunSummary.runCount} exámenes más antiguos están resumidos para mantener el archivo liviano.` }) : null,
+    );
+  }
+
+  private renderDelta(delta: number | null, suffix: string): HTMLElement | null {
+    if (delta === null) return null;
+    const points = delta / 10;
+    const tone = points > 0 ? "up" : points < 0 ? "down" : "flat";
+    const arrow = tone === "up" ? "▲" : tone === "down" ? "▼" : "=";
+    const text = tone === "flat"
+      ? `= igual${suffix ? ` ${suffix}` : ""}`
+      : `${arrow} ${points > 0 ? "+" : "−"}${formatGrade(Math.abs(points))}${suffix ? ` ${suffix}` : ""}`;
+    return node("span", { className: `delta-chip ${tone}`, text });
+  }
+
+  private renderScoreHero(insights: StudyInsights, history: ExamPoint[]): HTMLElement {
+    const hero = node("section", { className: "score-hero full", attrs: { "aria-label": "Tu nota" } });
+    if (insights.lastScorePercent === null) {
+      hero.append(node("div", { className: "score-hero-copy" },
+        node("p", { className: "hero-eyebrow", text: "TU NOTA" }),
+        node("div", { className: "hero-grade" }, node("strong", { text: "—" }), node("span", { text: "/10" })),
+        node("p", { className: "hero-sub", text: "Hacé tu primer examen y acá vas a ver tu nota y cómo evoluciona." }),
+      ));
+      return hero;
+    }
+    const recentCount = Math.min(5, history.length);
+    hero.append(node("div", { className: "score-hero-copy" },
+      node("p", { className: "hero-eyebrow", text: `TU ÚLTIMA NOTA · EXAMEN #${insights.examCount}` }),
+      node("div", { className: "hero-grade" }, node("strong", { text: grade(insights.lastScorePercent) }), node("span", { text: "/10" })),
+      node("div", { className: "hero-chips" }, this.renderDelta(insights.lastScoreDelta, "vs. el anterior")),
+      node("dl", { className: "hero-stats" },
+        node("div", {},
+          node("dt", { text: recentCount === 1 ? "Promedio" : `Promedio últimos ${recentCount}` }),
+          node("dd", {}, node("strong", { text: grade(insights.recentAveragePercent ?? 0) }), this.renderDelta(insights.recentAverageDelta, "vs. 5 previos")),
+        ),
+        node("div", {}, node("dt", { text: "Mejor nota" }), node("dd", {}, node("strong", { text: grade(insights.bestScorePercent ?? 0) }))),
+      ),
+    ));
+    hero.append(this.renderScoreChart(history));
+    return hero;
+  }
+
+  private renderSparkline(points: ExamPoint[]): HTMLElement {
+    const width = 240;
+    const height = 84;
+    const pad = 8;
+    const xFor = (index: number) => points.length === 1 ? width / 2 : pad + (index / (points.length - 1)) * (width - pad * 2);
+    const yFor = (value: number) => height - pad - (clampPercent(value) / 100) * (height - pad * 2);
+    const line = points.map((point, index) => `${xFor(index)},${yFor(point.scorePercent)}`).join(" ");
+    const svg = svgNode("svg", { className: "sparkline", attrs: { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true", focusable: "false" } },
+      svgNode("polygon", { className: "spark-area", attrs: { points: `${xFor(0)},${height - pad} ${line} ${xFor(points.length - 1)},${height - pad}` } }),
+      svgNode("polyline", { className: "spark-line", attrs: { points: line } }),
+    );
+    const last = points.at(-1);
+    if (last) svg.append(svgNode("circle", { className: "spark-dot", attrs: { cx: String(xFor(points.length - 1)), cy: String(yFor(last.scorePercent)), r: "5" } }));
+    return node("div", { className: "spark-wrap" }, svg);
+  }
+
+  private renderScoreChart(history: ExamPoint[]): HTMLElement {
+    const points = history.slice(-20);
+    const width = 640;
+    const height = 240;
+    const left = 30;
+    const right = width - 16;
+    const top = 18;
+    const bottom = height - 30;
+    const xFor = (index: number) => points.length === 1 ? (left + right) / 2 : left + (index / (points.length - 1)) * (right - left);
+    const yFor = (value: number) => bottom - (clampPercent(value) / 100) * (bottom - top);
+    const svg = svgNode("svg", { className: "score-chart", attrs: { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true", focusable: "false" } });
+    for (const tick of [0, 50, 100]) {
+      svg.append(
+        svgNode("line", { className: "score-grid", attrs: { x1: String(left), x2: String(right), y1: String(yFor(tick)), y2: String(yFor(tick)) } }),
+        svgNode("text", { className: "score-axis", attrs: { x: String(left - 8), y: String(yFor(tick) + 4), "text-anchor": "end" }, text: String(tick / 10) }),
+      );
+    }
+    const scoreLine = points.map((point, index) => `${xFor(index)},${yFor(point.scorePercent)}`).join(" ");
+    const averageLine = points.map((point, index) => `${xFor(index)},${yFor(point.movingAveragePercent)}`).join(" ");
+    svg.append(
+      svgNode("polygon", { className: "score-area", attrs: { points: `${xFor(0)},${bottom} ${scoreLine} ${xFor(points.length - 1)},${bottom}` } }),
+      svgNode("polyline", { className: "average-line", attrs: { points: averageLine } }),
+      svgNode("polyline", { className: "score-line", attrs: { points: scoreLine } }),
+    );
+    const crosshair = svgNode("line", { className: "score-crosshair", attrs: { y1: String(top), y2: String(bottom), x1: "0", x2: "0", visibility: "hidden" } });
+    svg.append(crosshair);
+    const labelEvery = Math.ceil(points.length / 10);
+    points.forEach((point, index) => {
+      svg.append(svgNode("circle", { className: "score-dot", attrs: { cx: String(xFor(index)), cy: String(yFor(point.scorePercent)), r: "5" } }));
+      if (index % labelEvery === 0 || index === points.length - 1) {
+        svg.append(svgNode("text", { className: "score-axis", attrs: { x: String(xFor(index)), y: String(height - 8), "text-anchor": "middle" }, text: `#${point.examNumber}` }));
+      }
+    });
+    const last = points.at(-1)!;
+    svg.append(svgNode("text", {
+      className: "score-direct-label",
+      attrs: { x: String(xFor(points.length - 1)), y: String(Math.max(top + 4, yFor(last.scorePercent) - 12)), "text-anchor": points.length === 1 ? "middle" : "end" },
+      text: grade(last.scorePercent),
+    }));
+
+    const tooltip = node("div", { className: "chart-tooltip", attrs: { hidden: "" } });
+    let hovered: ExamPoint | null = null;
+    const nearest = (clientX: number): number => {
+      const box = svg.getBoundingClientRect();
+      const x = ((clientX - box.left) / box.width) * width;
+      let best = 0;
+      points.forEach((_, index) => { if (Math.abs(xFor(index) - x) < Math.abs(xFor(best) - x)) best = index; });
+      return best;
+    };
+    svg.addEventListener("pointermove", (event) => {
+      const index = nearest(event.clientX);
+      const point = points[index]!;
+      hovered = point;
+      const box = svg.getBoundingClientRect();
+      crosshair.setAttribute("x1", String(xFor(index)));
+      crosshair.setAttribute("x2", String(xFor(index)));
+      crosshair.setAttribute("visibility", "visible");
+      tooltip.replaceChildren(
+        node("strong", { text: `Examen #${point.examNumber} · ${formatDate(point.run.submittedAt)}` }),
+        node("span", {}, node("i", { className: "key-score", attrs: { "aria-hidden": "true" } }), `Nota ${grade(point.scorePercent)} (${point.run.correctCount}/${point.run.items.length})`),
+        node("span", {}, node("i", { className: "key-average", attrs: { "aria-hidden": "true" } }), `Promedio móvil ${grade(point.movingAveragePercent)}`),
+        node("small", { text: "Clic para ver en qué fallaste" }),
+      );
+      tooltip.hidden = false;
+      const px = (xFor(index) / width) * box.width;
+      tooltip.style.left = `${Math.min(Math.max(px, 100), box.width - 100)}px`;
+      tooltip.style.top = `${(yFor(point.scorePercent) / height) * box.height}px`;
+    });
+    svg.addEventListener("pointerleave", () => {
+      hovered = null;
+      tooltip.hidden = true;
+      crosshair.setAttribute("visibility", "hidden");
+    });
+    svg.addEventListener("click", () => { if (hovered) this.openRun(hovered.run); });
+
+    const table = node("ol", { className: "visually-hidden" });
+    for (const point of points) table.append(node("li", { text: `Examen ${point.examNumber}: nota ${grade(point.scorePercent)}, promedio móvil ${grade(point.movingAveragePercent)}.` }));
+    return node("div", { className: "score-chart-card" },
+      node("div", { className: "score-chart-head" },
+        node("strong", { text: "Evolución de la nota" }),
+        node("div", { className: "chart-legend" },
+          node("span", { className: "legend-score", text: "Nota del examen" }),
+          node("span", { className: "legend-average", text: "Promedio móvil (5)" }),
+        ),
+      ),
+      node("div", { className: "score-chart-wrap" }, svg, tooltip),
+      table,
+    );
+  }
+
+  private renderCoach(snapshot: StudySnapshot): HTMLElement {
+    const insights = deriveInsights(snapshot);
+    const history = buildExamHistory(snapshot);
+    const [step, alternative] = recommendNextSteps(snapshot, insights);
+    const copy = this.nextStepCopy(step!);
+    const primary = button(copy.action, "primary coach-action", () => this.runNextStep(step!));
+    primary.disabled = this.busy || this.stale;
+    const card = node("section", { className: "coach-card", attrs: { "aria-labelledby": "coach-title" } },
+      node("p", { className: "coach-kicker", text: "TU PRÓXIMO PASO" }),
+      node("h2", { className: "coach-title", attrs: { id: "coach-title" } }, node("mark", { className: "highlight", text: copy.title })),
+      node("p", { className: "coach-reason", text: copy.reason }),
+      node("div", { className: "coach-actions" },
+        primary,
+        alternative
+          ? button(`o ${this.nextStepCopy(alternative).short}`, "text-button coach-alt", () => this.runNextStep(alternative))
+          : null,
+      ),
+    );
+    if (insights.lastScorePercent !== null) {
+      card.append(node("dl", { className: "coach-strip" },
+        node("div", { className: "strip-grade" },
+          node("dt", { text: "Última nota" }),
+          node("dd", {}, node("strong", { text: grade(insights.lastScorePercent) }), node("span", { text: "/10" }), this.renderDelta(insights.lastScoreDelta, "")),
+        ),
+        node("div", {}, node("dt", { text: "Promedio reciente" }), node("dd", {}, node("strong", { text: grade(insights.recentAveragePercent ?? 0) }))),
+        node("div", {}, node("dt", { text: "Nivel actual" }), node("dd", {}, node("strong", { text: percent(insights.currentLevelPercent ?? 0) }))),
+        node("div", {}, node("dt", { text: "Para repasar" }), node("dd", {}, node("strong", { text: String(insights.failed.length) }))),
+        node("div", { className: "strip-spark" }, this.renderSparkline(history.slice(-12))),
+      ));
+    }
+    return card;
+  }
+
+  private nextStepCopy(step: NextStep): { title: string; reason: string; action: string; short: string } {
+    switch (step.kind) {
+      case "diagnostic":
+        return {
+          title: "Hacé un examen de diagnóstico",
+          reason: "Diez preguntas de todos los niveles para ver desde dónde arrancás. Con eso te decimos qué conviene repasar.",
+          action: "Empezar diagnóstico",
+          short: "empezar un diagnóstico",
+        };
+      case "failed":
+        return {
+          title: `Repasá las ${step.failedCount} ${step.failedCount === 1 ? "pregunta que fallaste" : "preguntas que fallaste"}`,
+          reason: "Son las que respondiste mal la última vez. Cuando las respondés bien, salen de esta lista.",
+          action: `Repasar ${Math.min(10, step.failedCount)} ${step.failedCount === 1 ? "fallada" : "falladas"}`,
+          short: "repasar lo que fallaste",
+        };
+      case "topic":
+        return {
+          title: `Reforzá ${step.topic}`,
+          reason: `Es tu tema más flojo: acertaste ${percent(step.levelPercent)} de lo que viste. El repaso mezcla lo que fallaste y lo que te falta ver.`,
+          action: `Practicar ${step.questionIds.length} de este tema`,
+          short: `reforzar ${step.topic}`,
+        };
+      case "new":
+        return {
+          title: "Avanzá con preguntas nuevas",
+          reason: `Te quedan ${step.newCount} preguntas sin ver. Sumarlas amplía lo que cubrís de la materia.`,
+          action: `Seguir con ${Math.min(10, step.newCount)} nuevas`,
+          short: "seguir con nuevas",
+        };
+      default:
+        return {
+          title: "Hacé una práctica inteligente",
+          reason: "Mezcla todo el banco y prioriza lo que más te cuesta. Lo que respondiste hace poco descansa un rato.",
+          action: "Empezar práctica",
+          short: "hacer una práctica mezclada",
+        };
+    }
+  }
+
+  private async runNextStep(step: NextStep): Promise<void> {
+    if (!this.snapshot) return;
+    if (step.kind === "topic") {
+      await this.practiceQuestions(step.questionIds);
+      return;
+    }
+    if (step.kind === "failed") {
+      await this.practiceFailed();
+      return;
+    }
+    this.difficulty = "mixta";
+    this.population = step.kind === "mixed" ? "todas" : "nuevas";
+    await this.startRun(countEligible(this.snapshot, this.difficulty, this.population));
+  }
+
+  private renderKpiRow(insights: StudyInsights): HTMLElement {
+    const snapshot = this.snapshot!;
+    const metrics = deriveMetrics(snapshot);
+    const failedCount = insights.failed.length;
+    const review = node("article", { className: failedCount ? "kpi-tile attention" : "kpi-tile" },
+      node("span", { className: "kpi-label", text: "Para repasar" }),
+      node("strong", { className: "kpi-value", text: String(failedCount) }),
+      node("span", { className: "kpi-detail", text: failedCount ? "preguntas que fallaste la última vez" : "Nada pendiente. ¡Bien ahí!" }),
+    );
+    if (failedCount && !snapshot.progress.activeRun) {
+      review.append(button("Repasar →", "kpi-action", () => this.practiceFailed()));
+    }
+    return node("section", { className: "kpi-row", attrs: { "aria-label": "Indicadores" } },
+      node("article", { className: "kpi-tile" },
+        node("span", { className: "kpi-label", text: "Nivel actual" }),
+        node("strong", { className: "kpi-value", text: insights.currentLevelPercent === null ? "—" : percent(insights.currentLevelPercent) }),
+        node("span", { className: "kpi-detail", text: insights.currentLevelPercent === null ? "Aparece cuando respondas preguntas" : `de lo visto, ${metrics.masteredQuestions}/${metrics.evaluatedQuestions} bien la última vez` }),
+        this.renderMeter(insights.currentLevelPercent ?? 0),
+      ),
+      node("article", { className: "kpi-tile" },
+        node("span", { className: "kpi-label", text: "Cobertura" }),
+        node("strong", { className: "kpi-value", text: percent(metrics.coveragePercent) }),
+        node("span", { className: "kpi-detail", text: `${metrics.evaluatedQuestions} de ${metrics.totalQuestions} preguntas vistas` }),
+        this.renderMeter(metrics.coveragePercent),
+      ),
+      review,
+      node("article", { className: "kpi-tile" },
+        node("span", { className: "kpi-label", text: "Exámenes" }),
+        node("strong", { className: "kpi-value", text: String(insights.examCount) }),
+        node("span", { className: "kpi-detail", text: insights.examCount ? `${metrics.attemptCount} respuestas en total` : "Todavía ninguno" }),
+      ),
+    );
+  }
+
+  private renderMeter(value: number): HTMLElement {
+    // CSSOM writes are allowed by the hash-only style-src CSP; style attributes are not.
+    const fill = node("span");
+    fill.style.width = `${clampPercent(value)}%`;
+    return node("span", { className: "meter", attrs: { "aria-hidden": "true" } }, fill);
+  }
+
+  private renderTopicMap(topics: TopicInsight[]): HTMLElement {
+    const snapshot = this.snapshot!;
+    const grid = node("ul", { className: "topic-map" });
+    let focusSlots = 3;
+    for (const topic of topics) {
+      const failedIds = snapshot.questions
+        .filter((question) => question.topic === topic.topic
+          && Object.prototype.hasOwnProperty.call(snapshot.progress.questions, question.id)
+          && snapshot.progress.questions[question.id]!.lastResult === "incorrect")
+        .map((question) => question.id);
+      const level = topic.levelPercent;
+      const step = level === null ? "none" : String(Math.min(4, Math.floor(level / 20)));
+      const startHere = focusSlots > 0 && level !== null && level < 70 && failedIds.length > 0;
+      if (startHere) focusSlots -= 1;
+      grid.append(node("li", { className: startHere ? "topic-tile focus" : "topic-tile", data: { level: step } },
+        startHere ? node("span", { className: "topic-focus" }, node("mark", { className: "highlight", text: "Empezá por acá" })) : null,
+        node("div", { className: "topic-tile-head" },
+          node("strong", { className: "topic-name", text: topic.topic }),
+          node("span", { className: "topic-level", text: level === null ? "Sin ver" : percent(level) }),
+        ),
+        this.renderMeter(level ?? 0),
+        node("span", { className: "topic-detail", text: `${topic.evaluated}/${topic.total} vistas${topic.attempts ? ` · ${topic.correct}/${topic.attempts} aciertos` : ""}` }),
+        failedIds.length && !snapshot.progress.activeRun
+          ? button(`Repasar ${failedIds.length} ${failedIds.length === 1 ? "fallada" : "falladas"} →`, "topic-action", () => this.practiceQuestions(failedIds))
+          : null,
+      ));
+    }
+    return node("section", { className: "chart-card topic-card" },
+      node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "TEMAS" }), node("h2", { text: "Del más flojo al más firme" }))),
+      grid,
+    );
+  }
+
+  private renderFailedPanel(insights: StudyInsights): HTMLElement {
+    const section = node("section", { className: "chart-card failed-card" },
+      node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "A REPASAR" }), node("h2", { text: "Lo que fallaste" }))),
+    );
+    if (!insights.failed.length) {
+      section.append(node("p", { className: "supporting", text: "No hay preguntas falladas pendientes. Cada pregunta que falles aparece acá hasta que la respondas bien." }));
+      return section;
+    }
+    if (!this.snapshot!.progress.activeRun) {
+      section.append(button(`Practicar ${Math.min(10, insights.failed.length)} falladas`, "primary", () => this.practiceFailed()));
+    }
+    const list = node("ul", { className: "failed-list" });
+    for (const { question, progress } of insights.failed.slice(0, 40)) {
+      const correct = question.options.find((option) => option.id === question.correctOptionId)?.text ?? "";
+      list.append(node("li", {},
+        node("details", {},
+          node("summary", {},
+            node("span", { className: `difficulty ${question.difficulty}`, text: difficultyLabel(question.difficulty) }),
+            node("span", { className: "failed-prompt", text: question.prompt }),
+            node("small", { text: `${question.topic} · ${progress.correct}/${progress.attempts} aciertos` }),
+          ),
+          node("p", { className: "result-answer", text: `Respuesta correcta: ${correct}` }),
+          node("p", { className: "explanation", text: question.explanation }),
+        ),
+      ));
+    }
+    section.append(list);
+    if (insights.failed.length > 40) section.append(node("p", { className: "supporting", text: `Y ${insights.failed.length - 40} más.` }));
+    return section;
+  }
+
+  private openRun(run: CompletedRun): void {
+    this.resultRun = run;
+    this.resultFromHistory = true;
+    this.resultFilter = run.incorrectCount ? "incorrect" : "all";
+    this.setView("results");
+  }
+
+  private async practiceFailed(): Promise<void> {
+    if (!this.snapshot) return;
+    this.difficulty = "mixta";
+    this.population = "falladas";
+    await this.startRun(countEligible(this.snapshot, "mixta", "falladas"));
+  }
+
+  private async practiceQuestions(questionIds: string[]): Promise<void> {
+    if (!this.snapshot || this.busy || this.stale || !questionIds.length) return;
+    if (this.snapshot.progress.activeRun) {
+      this.notice = { kind: "warning", title: "Tenés un examen en curso", detail: "Terminalo o abandonalo antes de empezar un repaso." };
+      this.setView("study");
+      return;
+    }
+    const request = {
+      difficulty: "mixta" as const,
+      population: "todas" as const,
+      requestedSize: 10 as const,
+      acceptedSize: Math.min(10, questionIds.length),
+      questionIds,
+      seed: randomSeed(),
+    };
+    try {
+      if (await this.commit((current) => createActiveRun(current, request, new Date().toISOString()))) this.setView("exam");
+    } catch (error) {
+      this.notice = { kind: "error", title: "No se pudo preparar el repaso", detail: String(error) };
+      this.render();
+    }
   }
 
   private renderDifficultyBars(): HTMLElement {
@@ -1152,60 +1557,11 @@ class Application {
         node("progress", { attrs: { max: "100", value: String(value.coveragePercent), "aria-label": `Cobertura ${difficultyLabel(level)}` } }),
         node("div", { className: "difficulty-bar-detail" },
           node("span", { text: `${value.evaluated}/${value.total} evaluadas` }),
-          node("span", { text: value.accuracyPercent === null ? "Sin intentos" : `${percent(value.accuracyPercent)} precisión` }),
+          node("span", { text: value.evaluated ? `nivel ${percent(Math.round((value.mastered / value.evaluated) * 1000) / 10)}` : "Sin intentos" }),
         ),
       ));
     }
     return list;
-  }
-
-  private renderRunTrendChart(): HTMLElement {
-    const trend = buildRunTrend(this.snapshot!);
-    const section = node("section", { className: "chart-card run-trend" },
-      node("div", { className: "section-heading" },
-        node("div", {}, node("p", { className: "eyebrow", text: "EVOLUCIÓN" }), node("h2", { text: "Últimos exámenes" })),
-        node("div", { className: "chart-legend", attrs: { "aria-label": "Leyenda" } },
-          node("span", { className: "legend-accuracy", text: "Precisión" }),
-          node("span", { className: "legend-coverage", text: "Cobertura" }),
-        ),
-      ),
-    );
-    if (!trend.length) {
-      section.append(node("div", { className: "empty-chart" }, node("strong", { text: "Sin exámenes todavía" }), node("span", { text: "La tendencia aparece después del primer examen." })));
-      return section;
-    }
-
-    const left = 46;
-    const right = 616;
-    const top = 20;
-    const bottom = 188;
-    const height = bottom - top;
-    const xFor = (index: number): number => trend.length === 1 ? (left + right) / 2 : left + (index / (trend.length - 1)) * (right - left);
-    const yFor = (value: number): number => bottom - (clampPercent(value) / 100) * height;
-    const svg = svgNode("svg", { className: "run-chart", attrs: { viewBox: "0 0 640 225", "aria-hidden": "true", focusable: "false" } });
-    for (const tick of [0, 50, 100]) {
-      const y = yFor(tick);
-      svg.append(
-        svgNode("line", { className: "chart-grid-line", attrs: { x1: String(left), y1: String(y), x2: String(right), y2: String(y) } }),
-        svgNode("text", { className: "chart-axis-label", attrs: { x: "8", y: String(y + 4) }, text: `${tick}%` }),
-      );
-    }
-    trend.forEach((point, index) => {
-      const x = xFor(index);
-      const y = yFor(point.accuracyPercent);
-      svg.append(
-        svgNode("rect", { className: "accuracy-bar", attrs: { x: String(x - 9), y: String(y), width: "18", height: String(bottom - y), rx: "5" } }),
-        svgNode("text", { className: "chart-run-label", attrs: { x: String(x), y: "213", "text-anchor": "middle" }, text: String(point.runNumber) }),
-      );
-    });
-    const coveragePoints = trend.map((point, index) => `${xFor(index)},${yFor(point.coveragePercent)}`).join(" ");
-    svg.append(svgNode("polyline", { className: "coverage-line", attrs: { points: coveragePoints } }));
-    trend.forEach((point, index) => svg.append(svgNode("circle", { className: "coverage-point", attrs: { cx: String(xFor(index)), cy: String(yFor(point.coveragePercent)), r: "4" } })));
-
-    const accessible = node("ol", { className: "visually-hidden" });
-    for (const point of trend) accessible.append(node("li", { text: `Examen ${point.runNumber}: ${percent(point.accuracyPercent)} de precisión y ${percent(point.coveragePercent)} de cobertura.` }));
-    section.append(svg, accessible, node("p", { className: "chart-caption", text: "Las barras muestran precisión. La línea muestra cuánto del banco ya habías evaluado al terminar cada examen." }));
-    return section;
   }
 
   private renderModule(): HTMLElement {
@@ -1254,16 +1610,23 @@ class Application {
       : null;
     if (!rememberedRun) this.resultRun = null;
     const run = rememberedRun ?? snapshot.progress.runs.at(-1) ?? null;
+    const runIndex = run ? snapshot.progress.runs.findIndex((candidate) => candidate.id === run.id) : -1;
+    const examNumber = snapshot.progress.priorRunSummary.runCount + runIndex + 1;
     const wrapper = node("div", { className: "route-panel results-route" },
-      this.pageHeader("Resultados", "Revisá qué salió bien y qué conviene practicar otra vez.", "EXAMEN COMPLETADO"),
+      this.pageHeader(
+        run ? `Examen #${examNumber}` : "Resultados",
+        run ? `Entregado el ${formatDate(run.submittedAt)} · ${difficultyLabel(run.filters.difficulty)}` : "Revisá qué salió bien y qué conviene practicar otra vez.",
+        this.resultFromHistory ? "HISTORIAL" : "EXAMEN COMPLETADO",
+      ),
     );
     if (!run) return node("div", {}, wrapper, node("p", { text: "No hay un resultado reciente para mostrar." }));
+    const mistakes = incorrectItemIds(run, snapshot);
     const coverageGain = run.coverageAfterCount - run.coverageBeforeCount;
     wrapper.append(node("section", { className: "result-hero" },
-      this.renderPercentRing(scorePercent(run.correctCount, run.items.length), "precisión", `${run.correctCount}/${run.items.length}`, "score-ring"),
+      this.renderPercentRing(scorePercent(run.correctCount, run.items.length), "nota", `${grade(runScorePercent(run))}/10`, "score-ring"),
       node("div", { className: "result-copy" },
         node("p", { className: "eyebrow", text: "RESULTADO" }),
-        node("h2", { text: `${run.correctCount} de ${run.items.length} correctas` }),
+        node("h2", { text: `Nota ${grade(runScorePercent(run))} · ${run.correctCount} de ${run.items.length} correctas` }),
         node("p", { text: coverageGain
           ? `Sumaste ${coverageGain} ${coverageGain === 1 ? "pregunta nueva" : "preguntas nuevas"} a tu cobertura.`
           : "Este examen reforzó preguntas que ya habías evaluado." }),
@@ -1272,11 +1635,19 @@ class Application {
           node("span", { className: "error-chip", text: `${run.incorrectCount} incorrectas` }),
           node("span", { className: "coverage-chip", text: `+${coverageGain} cobertura` }),
         ),
-        node("div", { className: "button-row" }, button("Nuevo examen", "primary", () => this.setView("study")), button("Ver progreso", "secondary", () => this.setView("progress"))),
+        node("div", { className: "button-row" },
+          mistakes.length && !snapshot.progress.activeRun
+            ? button(`Practicar ${mistakes.length === 1 ? "este error" : `estos ${mistakes.length} errores`}`, "primary", () => this.practiceQuestions(mistakes))
+            : null,
+          button("Nuevo examen", mistakes.length ? "secondary" : "primary", () => this.setView("study")),
+          button(this.resultFromHistory ? "Volver al tablero" : "Ver progreso", "secondary", () => this.setView("progress")),
+        ),
       ),
     ));
     const list = node("ol", { className: "result-list" });
+    const showOnlyMistakes = this.resultFilter === "incorrect" && mistakes.length > 0;
     for (const item of run.items) {
+      if (showOnlyMistakes && !mistakes.includes(item.questionId)) continue;
       const question = findQuestion(snapshot, item.questionId);
       const selectedId = item.answer?.kind === "option" ? item.answer.optionId : null;
       const selected = selectedId ? question.options.find((option) => option.id === selectedId)?.text : "No sé";
@@ -1299,10 +1670,26 @@ class Application {
       ));
     }
     wrapper.append(node("section", { className: "review-section" },
-      node("div", { className: "section-heading" }, node("div", {}, node("p", { className: "eyebrow", text: "REVISIÓN" }), node("h2", { text: "Pregunta por pregunta" }))),
+      node("div", { className: "section-heading" },
+        node("div", {}, node("p", { className: "eyebrow", text: "REVISIÓN" }), node("h2", { text: "Pregunta por pregunta" })),
+        mistakes.length ? this.renderResultFilter(run.items.length, mistakes.length) : null,
+      ),
       list,
     ));
     return wrapper;
+  }
+
+  private renderResultFilter(total: number, mistakes: number): HTMLElement {
+    const group = node("div", { className: "segmented compact", attrs: { role: "radiogroup", "aria-label": "Filtrar revisión" } });
+    for (const [value, label] of [["incorrect", `Solo errores (${mistakes})`], ["all", `Todas (${total})`]] as const) {
+      const input = node("input", {
+        attrs: { type: "radio", name: "result-filter", value },
+        on: { change: () => { this.resultFilter = value; this.render(true); } },
+      });
+      input.checked = this.resultFilter === value;
+      group.append(node("label", { className: "segment" }, input, node("span", { className: "segment-label", text: label })));
+    }
+    return group;
   }
 
   private importControl(label: string): HTMLElement {
@@ -1496,18 +1883,21 @@ class Application {
       const choices: Array<[string, string, string]> = [["return", "Cambiar filtros", "secondary"]];
       if (this.population === "nuevas" && countEligible(this.snapshot, this.difficulty, "todas") >= 10) choices.push(["all", "Incluir evaluadas", "primary"]);
       if (eligible > 0) choices.push(["short", `Empezar con ${eligible}`, "secondary"]);
+      const noFailed = eligible === 0 && this.population === "falladas";
       const choice = await this.ask(
-        eligible === 0 && this.population === "nuevas" ? "Ya recorriste todas las preguntas nuevas" : "No llegan a 10 preguntas",
-        eligible === 0 ? "Con estos filtros no quedan preguntas. La aplicación nunca repite ni cambia el filtro en silencio." : `Hay ${eligible} preguntas disponibles. Elegí cómo continuar.`,
+        noFailed
+          ? "No tenés falladas pendientes"
+          : eligible === 0 && this.population === "nuevas" ? "Ya recorriste todas las preguntas nuevas" : "No llegan a 10 preguntas",
+        noFailed
+          ? "Todo lo que fallaste ya lo respondiste bien después. Probá con Práctica inteligente o cambiá la dificultad."
+          : eligible === 0 ? "Con estos filtros no quedan preguntas. La aplicación nunca repite ni cambia el filtro en silencio." : `Hay ${eligible} preguntas disponibles. Elegí cómo continuar.`,
         choices,
       );
       if (choice === "all") { this.population = "todas"; this.syncStudyRoute(); return; }
       if (choice !== "short") return;
       acceptedSize = eligible;
     }
-    const seed = globalThis.crypto?.getRandomValues
-      ? globalThis.crypto.getRandomValues(new Uint32Array(1))[0] ?? 1
-      : (Date.now() >>> 0) || 1;
+    const seed = randomSeed();
     try {
       const request = {
         difficulty: this.difficulty,
@@ -1569,6 +1959,8 @@ class Application {
     const candidate = await this.commit((current) => submitActiveRun(current, new Date().toISOString()));
     if (candidate) {
       this.resultRun = candidate.progress.runs.at(-1) ?? null;
+      this.resultFromHistory = false;
+      this.resultFilter = "all";
       this.setView("results");
     }
   }
@@ -1657,7 +2049,7 @@ class Application {
     const steps = node("ol", { className: "help-steps" });
     for (const [title, detail] of [
       ["Cargá tus preguntas", "Elegí un archivo .study.json o usá Cargar desde enlace si ya está publicado en la web. La app llama módulo a ese archivo: contiene tus preguntas y puede incluir progreso anterior. Solo la carga por enlace necesita internet."],
-      ["Prepará un examen", "En Estudiar elegí la dificultad y Solo nuevas para avanzar, o Todas para repasar. Cada examen tiene 10 preguntas; si no alcanzan, la app te avisa."],
+      ["Prepará un examen", "En Estudiar elegí la dificultad y qué practicar: Nuevas para avanzar, Falladas para repasar tus errores o Práctica inteligente, que mezcla todo priorizando lo que más necesitás. Cada examen tiene hasta 10 preguntas; si no alcanzan, la app te avisa."],
       ["Respondé y revisá", "Podés volver con Anterior o los números. Pausar examen conserva tus respuestas sin corregirlas. Entregar examen muestra el resultado, las explicaciones y las fuentes."],
       ["Guardá una copia para seguir después", "Usá Guardar archivo… y comprobá la descarga. Incluye tus preguntas y tu progreso, incluso un examen pausado. Para cambiar de dispositivo, cargá ese archivo más reciente."],
     ] as const) steps.append(node("li", {}, node("h3", { text: title }), node("p", { text: detail })));
