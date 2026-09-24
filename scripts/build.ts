@@ -41,7 +41,9 @@ const fontCss = [
   await fontFace("Source Serif 4", "200 900", "assets/fonts/SourceSerif4-Variable.woff2"),
 ].filter(Boolean).join("\n");
 const baseCss = await readFile(resolve(root, "src/styles/app.css"), "utf8");
-const styles = `${fontCss}${fontCss ? "\n" : ""}${baseCss.trim()}\n`;
+// Browsers hash <style> text after normalizing CRLF to LF, so a Windows
+// checkout must be normalized before hashing or the CSP blocks every style.
+const styles = `${fontCss}${fontCss ? "\n" : ""}${baseCss.replace(/\r\n?/g, "\n").trim()}\n`;
 const csp = [
   "default-src 'none'",
   `script-src 'sha256-${sha256(script)}'`,
