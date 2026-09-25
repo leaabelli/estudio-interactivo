@@ -501,37 +501,45 @@ class Application {
 
   private renderEntry(): HTMLElement {
     const main = node("main", { className: "boot route-panel", attrs: { id: "main-content", tabindex: "-1" } });
-    main.append(node("div", { className: "entry-brand" },
-      node("span", { className: "brand-mark", text: "E", attrs: { "aria-hidden": "true" } }),
-      node("span", { text: "Estudio Interactivo" }),
+    main.append(node("header", { className: "entry-top" },
+      node("div", { className: "entry-brand" },
+        node("span", { className: "brand-mark", text: "E", attrs: { "aria-hidden": "true" } }),
+        node("span", { text: "Estudio Interactivo" }),
+      ),
+      button("Cómo usar", "text-button entry-help", () => this.showHelp()),
     ));
+    if (this.notice) main.append(this.renderNotice());
     if (this.view === "recoveries" && this.recoveries.length) {
-      main.append(
+      main.append(node("section", { className: "entry-recoveries" },
         node("p", { className: "eyebrow", text: "RECUPERACIÓN LOCAL" }),
-        node("h1", { className: "route-title", text: "Elegí tu progreso", attrs: { tabindex: "-1" } }),
-        node("p", { className: "page-intro", text: "Cada copia pertenece a este navegador y a esta ubicación del HTML." }),
+        node("h1", { className: "route-title", text: "Seguí donde lo dejaste", attrs: { tabindex: "-1" } }),
+        node("p", { className: "page-intro", text: "Estas copias quedaron guardadas en este navegador. Abrí la materia que quieras continuar." }),
         this.renderRecoveryList(),
-        this.importControl("Cargar otro módulo"),
-        this.remoteImportControl(),
-      );
-    } else {
-      main.append(
-        node("div", { className: "entry-copy" },
-          node("p", { className: "eyebrow", text: "TU ESPACIO DE PRÁCTICA" }),
-          node("h1", { className: "route-title", text: "Estudiá a tu ritmo", attrs: { tabindex: "-1" } }),
-          node("p", { className: "page-intro", text: "Cargá tus preguntas, practicá en etapas y guardá tu progreso para seguir después." }),
-        ),
-        node("section", { className: "import-card", attrs: { "aria-label": "Cargar módulo de estudio" } },
-          node("div", { className: "import-illustration", attrs: { "aria-hidden": "true" } }, ".study"),
-          node("h2", { text: "Cargá tus preguntas" }),
-          node("p", { text: "Tus respuestas y tu progreso quedan en este dispositivo." }),
-          node("div", { className: "button-row" }, this.importControl("Elegir archivo"), this.remoteImportControl()),
-          node("p", { className: "supporting", text: "El .study.json contiene tus preguntas y tu progreso. Solo la carga desde enlace necesita conexión." }),
-        ),
-      );
+        node("div", { className: "button-row entry-more" }, this.importControl("Cargar otro módulo"), this.remoteImportControl()),
+      ));
+      return main;
     }
-    main.append(button("Cómo usar", "text-button entry-help", () => this.showHelp()));
-    if (this.notice) main.prepend(this.renderNotice());
+    main.append(
+      node("div", { className: "entry-copy" },
+        node("p", { className: "eyebrow", text: "TU ESPACIO DE PRÁCTICA" }),
+        node("h1", { className: "route-title", attrs: { tabindex: "-1" } },
+          "Practicá hasta que ", node("mark", { className: "highlight", text: "te salga" }), "."),
+        node("p", { className: "page-intro", text: "Hacé exámenes de práctica con tus preguntas, mirá cómo evoluciona tu nota y repasá justo lo que fallaste." }),
+      ),
+      node("section", { className: "import-card", attrs: { "aria-labelledby": "import-title" } },
+        node("h2", { text: "Cargá tus preguntas", attrs: { id: "import-title" } }),
+        node("p", { text: "Elegí el archivo .study.json de tu materia o pegá su enlace." }),
+        node("div", { className: "import-actions" }, this.importControl("Elegir archivo"), this.remoteImportControl()),
+        node("p", { className: "supporting", text: "Tus respuestas quedan en este dispositivo. Solo la carga desde enlace necesita conexión." }),
+      ),
+      node("ol", { className: "entry-steps", attrs: { "aria-label": "Cómo funciona" } },
+        ...[
+          ["Practicá", "Exámenes de hasta 10 preguntas, del nivel que elijas."],
+          ["Mirá tu nota", "Cada respuesta se corrige con explicación y fuente."],
+          ["Repasá lo que fallaste", "La app te dice por dónde seguir para mejorar."],
+        ].map(([title, detail]) => node("li", {}, node("strong", { text: title }), node("span", { text: detail }))),
+      ),
+    );
     return main;
   }
 
@@ -774,14 +782,13 @@ class Application {
     wrapper.append(node("section", { className: "setup-panel" },
       node("div", { className: "section-heading" },
         node("div", {}, node("p", { className: "eyebrow", text: "A TU MANERA" }), node("h2", { text: "Armá tu examen" })),
-        node("span", { className: "question-count-chip", text: "10 preguntas" }),
       ),
       node("div", { className: "exam-setup" },
         node("div", { className: "field" }, node("label", { text: "Dificultad", attrs: { for: "difficulty" } }), difficultySelect),
         node("div", { className: "field field-wide" }, node("span", { className: "field-label", text: "¿Qué querés practicar?", attrs: { id: "population-label" } }), populationGroup),
         node("div", { className: "start" },
           startButton,
-          node("p", { className: "eligible", data: { role: "eligible" }, attrs: { role: "status", "aria-live": "polite" }, text: `${eligible} disponibles con estos filtros` }),
+          node("p", { className: "eligible visually-hidden", data: { role: "eligible" }, attrs: { role: "status", "aria-live": "polite" }, text: `${eligible} disponibles con estos filtros` }),
         ),
       ),
     ));
@@ -1653,20 +1660,40 @@ class Application {
       const selected = selectedId ? question.options.find((option) => option.id === selectedId)?.text : "No sé";
       const correct = question.options.find((option) => option.id === question.correctOptionId)?.text ?? question.correctOptionId;
       const isCorrect = selectedId === question.correctOptionId;
-      list.append(node("li", { className: "result-item", data: { result: isCorrect ? "correct" : "incorrect" } },
-        node("div", { className: "result-item-heading" },
-          node("span", { className: "result-marker", text: isCorrect ? "✓" : "×", attrs: { "aria-hidden": "true" } }),
-          node("div", { className: "result-question-copy" },
-            node("h3", { text: question.prompt }),
-            question.body ? node("p", { className: "result-question-body", text: question.body }) : null,
+      const answers = node("div", { className: isCorrect ? "answer-compare single" : "answer-compare" },
+        node("div", { className: `answer-box ${isCorrect ? "is-correct" : "is-wrong"}` },
+          node("span", { className: "answer-box-label" },
+            node("span", { className: "answer-box-icon", text: isCorrect ? "✓" : "✗", attrs: { "aria-hidden": "true" } }),
+            isCorrect ? "Tu respuesta · correcta" : "Tu respuesta",
           ),
+          node("strong", { text: selected ?? "No sé" }),
         ),
-        this.renderQuestionSupportingContent(question, true),
-        node("p", { className: "result-answer", text: `Tu respuesta: ${selected}` }),
-        node("p", { className: "result-answer", text: `Respuesta correcta: ${correct}` }),
-        node("strong", { className: "result-verdict", text: isCorrect ? "Correcta" : "Incorrecta" }),
-        node("p", { className: "explanation", text: question.explanation }),
-        this.renderQuestionSource(question, true),
+        isCorrect ? null : node("div", { className: "answer-box is-correct" },
+          node("span", { className: "answer-box-label" },
+            node("span", { className: "answer-box-icon", text: "✓", attrs: { "aria-hidden": "true" } }),
+            "Respuesta correcta",
+          ),
+          node("strong", { text: correct }),
+        ),
+      );
+      list.append(node("li", { className: "result-item", data: { result: isCorrect ? "correct" : "incorrect" } },
+        node("span", { className: "result-marker", text: isCorrect ? "✓" : "✗", attrs: { "aria-hidden": "true" } }),
+        node("div", { className: "result-body" },
+          node("div", { className: "result-meta" },
+            node("span", { className: `difficulty ${question.difficulty}`, text: difficultyLabel(question.difficulty) }),
+            node("span", { text: question.topic }),
+            node("span", { className: "visually-hidden", text: isCorrect ? "Correcta" : "Incorrecta" }),
+          ),
+          node("h3", { className: "result-prompt", text: question.prompt }),
+          question.body ? node("p", { className: "result-question-body", text: question.body }) : null,
+          this.renderQuestionSupportingContent(question, true),
+          answers,
+          node("div", { className: "explanation" },
+            node("span", { className: "explanation-label", text: "Por qué" }),
+            node("p", { text: question.explanation }),
+          ),
+          this.renderQuestionSource(question, true),
+        ),
       ));
     }
     wrapper.append(node("section", { className: "review-section" },

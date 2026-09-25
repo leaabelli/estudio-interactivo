@@ -67,8 +67,8 @@ Después de entregar vas a ver cuántas respuestas acertaste y cuántas pregunta
 
 ![Detalle de una corrección: compará tu respuesta, leé la explicación y ubicá la fuente.](images/manual/04-resultados.png)
 
-1. Compará **Tu respuesta** con **Respuesta correcta**. La app indica si acertaste o no.
-2. Leé la **explicación**, incluso cuando hayas acertado. Te ayuda a distinguir una respuesta segura de una que elegiste por descarte.
+1. Compará **Tu respuesta** (en rojo si fallaste) con la **Respuesta correcta** (en verde).
+2. Leé el **Por qué**, incluso cuando hayas acertado. Te ayuda a distinguir una respuesta segura de una que elegiste por descarte.
 3. Mirá la **fuente**, cuando esté incluida. Te orienta hacia el material del que salió la pregunta: por ejemplo, una clase, página o ejercicio.
 
 Las tablas, imágenes y diagramas vuelven a aparecer en la corrección. Las fuentes se muestran después de entregar, para no darte pistas durante el examen.
