@@ -1,7 +1,7 @@
 # Estudio Interactivo
 
 Aplicación de estudio offline y autocontenida. Importa módulos `*.study.json`,
-crea exámenes modelo de 10 preguntas, evita repeticiones innecesarias y conserva
+crea exámenes con cantidad y distribución por tema configurables, evita repeticiones innecesarias y conserva
 cobertura, precisión, dominio e historial entre sesiones. Las preguntas pueden
 incluir tablas, imágenes y diagramas accesibles.
 
@@ -44,6 +44,37 @@ ese mismo JSON, de modo que tampoco necesitan internet ni archivos auxiliares.
 **Cómo usar** abre una ayuda breve dentro del propio HTML, también sin conexión.
 **Pausar examen** conserva las respuestas sin corregirlas; no descarga un archivo.
 
+En **Armá tu examen** elegís la dificultad, qué practicar y el reparto:
+
+- Elegí **10**, **20**, **30** u **Otra cantidad**. Activá los temas que querés
+  incluir: al cambiar el total o los temas, la app reparte lo más parejo posible.
+- Ajustá cada tema con **− / +**. Cada toque cambia solo ese tema y el total;
+  las otras cantidades se mantienen. Por ejemplo, podés dejar 5, 5 y 10.
+- **Repartir parejo** vuelve a equilibrar el total entre los temas activos.
+  Las cantidades están limitadas por las preguntas disponibles con los filtros
+  elegidos. Si no alcanza el reparto automático, pide confirmación para un examen
+  más corto; un reparto ajustado manualmente se respeta exactamente.
+
+Los temas se leen del módulo, no de una lista fija. Un resumen muestra el reparto
+antes de empezar. **Guardar reparto** conserva solo la cantidad y la distribución
+por materia en este navegador; también se guardan al comenzar un examen personalizado.
+**Tu último reparto** muestra el total y los temas guardados. **Usar reparto**
+los recupera y **Editar reparto** abre los controles, sin cambiar la dificultad ni **¿Qué querés
+practicar?** (Nuevas, Falladas o Práctica inteligente). También se ignoran esos filtros
+en configuraciones guardadas con versiones anteriores. Al volver a
+abrir la materia se restaura automáticamente. Este ajuste es local: no modifica
+el progreso ni viaja en el archivo exportado. Si el navegador bloquea el guardado,
+la app lo indica y permite seguir en la sesión. Las cantidades guardadas se
+revalidan contra el banco y el progreso actual, sin reemplazos silenciosos.
+Cada inicio vuelve a seleccionar preguntas; puede repetir algunas si los filtros
+y el banco lo permiten. Los atajos del coach siguen siendo de hasta 10 preguntas
+y no sobrescriben la configuración guardada.
+
+Los módulos y progresos anteriores siguen abriéndose sin reiniciar nada. La
+configuración del examen iniciado se conserva al pausar, recargar y exportar.
+Para abrir archivos con exámenes personalizados usá esta versión de la app o una
+posterior: las versiones antiguas limitaban los exámenes a 10 preguntas.
+
 **Cargar desde enlace** acepta un enlace público HTTPS directo al JSON. El sitio
 de origen debe permitir la lectura desde el navegador (CORS). Si no la permite,
 descargá el archivo y elegilo localmente. No se envían respuestas ni credenciales
@@ -73,6 +104,12 @@ bun run test:all
 y verifica el HTML autocontenido; valida el módulo inicial; genera y revisa el PDF
 local; y crea `site/` con exactamente el único artefacto publicable:
 `index.html`.
+
+La prueba de navegador de exámenes configurables usa Playwright instalado:
+`node tests/browser/configurable-exams.mjs` (si está fuera del proyecto, indicá su
+directorio de paquetes con `NODE_PATH`). Comprueba cuotas 5/5/10, filtros,
+guardado y recuperación, exportación/importación y vistas de escritorio/celular.
+Deja capturas y archivos sintéticos en `output/playwright/configurable-exams/`.
 
 ## Crear módulos
 

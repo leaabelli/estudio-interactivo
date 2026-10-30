@@ -246,8 +246,23 @@
           "enum": ["facil", "medio", "dificil", "experto", "mixta"]
         },
         "population": { "enum": ["nuevas", "todas"] },
-        "requestedSize": { "const": 10 },
-        "acceptedSize": { "type": "integer", "minimum": 1, "maximum": 10 }
+        "requestedSize": { "type": "integer", "minimum": 1, "maximum": 5000 },
+        "acceptedSize": { "type": "integer", "minimum": 1, "maximum": 5000 },
+        "topicQuotas": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5000,
+          "items": { "$ref": "#/$defs/topicQuota" }
+        }
+      }
+    },
+    "topicQuota": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topic", "count"],
+      "properties": {
+        "topic": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "count": { "type": "integer", "minimum": 1, "maximum": 5000 }
       }
     },
     "runItem": {
@@ -293,12 +308,12 @@
         "items": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 10,
+          "maxItems": 5000,
           "items": { "$ref": "#/$defs/runItem" }
         },
         "status": { "const": "active" },
         "submittedAt": { "type": "null" },
-        "currentIndex": { "type": "integer", "minimum": 0, "maximum": 9 }
+        "currentIndex": { "type": "integer", "minimum": 0, "maximum": 4999 }
       }
     },
     "completedRun": {
@@ -330,13 +345,13 @@
         "items": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 10,
+          "maxItems": 5000,
           "items": { "$ref": "#/$defs/runItem" }
         },
         "status": { "const": "completed" },
         "submittedAt": { "$ref": "#/$defs/timestamp" },
-        "correctCount": { "type": "integer", "minimum": 0, "maximum": 10 },
-        "incorrectCount": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "correctCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "incorrectCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
         "coverageAfterCount": { "type": "integer", "minimum": 0, "maximum": 5000 }
       }
     },

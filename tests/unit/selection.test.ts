@@ -174,7 +174,7 @@ describe("selection", () => {
     const snapshot = makeSnapshot();
     expect(() => selectQuestions(snapshot, { ...baseRequest, seed: -1 })).toThrow("unsigned");
     expect(() =>
-      selectQuestions(snapshot, { ...baseRequest, requestedSize: 9 as 10 })
-    ).toThrow("exactly 10");
+      selectQuestions(snapshot, { ...baseRequest, requestedSize: 0 })
+    ).toThrow("integer from 1");
   });
 });

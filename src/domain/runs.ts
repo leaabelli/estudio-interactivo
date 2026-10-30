@@ -109,8 +109,9 @@ export function createActiveRun(
       // "falladas" and explicit ID pools are subsets of "todas"; persisting only
       // the original enum keeps files compatible with every app version.
       population: request.population === "nuevas" && !request.questionIds ? "nuevas" : "todas",
-      requestedSize: 10,
-      acceptedSize: selected.length
+      requestedSize: request.requestedSize,
+      acceptedSize: selected.length,
+      ...(request.topicQuotas ? { topicQuotas: request.topicQuotas.map((quota) => ({ ...quota })) } : {})
     },
     coverageBeforeCount: coverageCount(snapshot),
     currentIndex: 0,

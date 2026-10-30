@@ -7,8 +7,9 @@ import type {
   StudyAnswer,
   StudyQuestion,
   StudySnapshot,
+  TopicQuota,
 } from "../domain/types";
-import { DIFFICULTIES } from "../domain/types";
+import { DIFFICULTIES, MAX_RUN_SIZE } from "../domain/types";
 import {
   abandonActiveRun,
   answerActiveRun,
@@ -17,7 +18,9 @@ import {
   runAnsweredCount,
   submitActiveRun,
 } from "../domain/runs";
-import { countEligible } from "../domain/selection";
+import { countEligible, countEligibleByTopic, topicQuotaError } from "../domain/selection";
+import { distributeTopics, reconcileExamSetup, stepTopicQuota, type ExamSetup } from "../domain/exam-setup";
+import { loadExamSetup, saveExamSetup } from "../adapters/exam-setup";
 import { deriveMetrics } from "../domain/metrics";
 import {
   buildExamHistory,
@@ -300,6 +303,14 @@ class Application {
   private view: View = "empty";
   private difficulty: DifficultyFilter = "mixta";
   private population: SelectionPopulation = "nuevas";
+  private requestedSize = 10;
+  private customTopics = false;
+  private topicCounts = new Map<string, number>();
+  private selectedTopics = new Set<string>();
+  private savedSetup: ExamSetup | null = null;
+  private otherSizeVisible = false;
+  private setupEditorOpen = true;
+  private setupNote = "Se recuerda al comenzar. También podés guardarla ahora para usarla otro día.";
   private resultFilter: "all" | "incorrect" = "all";
   private resultFromHistory = false;
   private notice: NoticeState | null = null;
@@ -326,6 +337,25 @@ class Application {
       this.store = await createStudyStore(this.repository);
       this.store.subscribe((state) => {
         const hadActiveRun = Boolean(this.snapshot?.progress.activeRun);
+        if (this.snapshot?.module.id !== state.snapshot?.module.id
+          || this.snapshot?.module.contentRevision !== state.snapshot?.module.contentRevision) {
+          this.difficulty = "mixta";
+          this.population = "nuevas";
+          this.requestedSize = 10;
+          this.customTopics = false;
+          this.otherSizeVisible = false;
+          this.setupEditorOpen = true;
+          this.topicCounts.clear();
+          this.selectedTopics = new Set(state.snapshot?.questions.map((q) => q.topic) ?? []);
+          this.savedSetup = state.snapshot ? loadExamSetup(state.snapshot.module.id) : null;
+          this.setupNote = "Se recuerda al comenzar. También podés guardarla ahora para usarla otro día.";
+          if (this.savedSetup) {
+            this.savedSetup = reconcileExamSetup(this.savedSetup, this.selectedTopics);
+            this.applyExamSetup(this.savedSetup);
+            this.setupEditorOpen = false;
+            this.setupNote = "Recuperamos tu configuración de esta materia. Revisá las disponibles antes de empezar.";
+          }
+        }
         this.snapshot = state.snapshot;
         const activeRunChanged = hadActiveRun !== Boolean(state.snapshot?.progress.activeRun);
         this.volatile = state.mode === "volatile";
@@ -534,7 +564,7 @@ class Application {
       ),
       node("ol", { className: "entry-steps", attrs: { "aria-label": "Cómo funciona" } },
         ...[
-          ["Practicá", "Exámenes de hasta 10 preguntas, del nivel que elijas."],
+          ["Practicá", "Elegí la cantidad de preguntas, los temas y la dificultad."],
           ["Mirá tu nota", "Cada respuesta se corrige con explicación y fuente."],
           ["Repasá lo que fallaste", "La app te dice por dónde seguir para mejorar."],
         ].map(([title, detail]) => node("li", {}, node("strong", { text: title }), node("span", { text: detail }))),
@@ -747,7 +777,7 @@ class Application {
 
     const difficultySelect = node("select", {
       attrs: { id: "difficulty" },
-      on: { change: (event) => { this.difficulty = (event.currentTarget as HTMLSelectElement).value as DifficultyFilter; this.syncStudyRoute(); } },
+      on: { change: (event) => { this.difficulty = (event.currentTarget as HTMLSelectElement).value as DifficultyFilter; this.editExamSetup(); } },
     });
     for (const value of ["mixta", ...DIFFICULTIES] as DifficultyFilter[]) {
       const option = node("option", { text: difficultyLabel(value), attrs: { value } });
@@ -762,7 +792,7 @@ class Application {
     ] as Array<[SelectionPopulation, string, string]>) {
       const input = node("input", {
         attrs: { type: "radio", name: "population", value },
-        on: { change: () => { this.population = value; this.syncStudyRoute(); } },
+        on: { change: () => { this.population = value; this.editExamSetup(); } },
       });
       input.checked = value === this.population;
       populationGroup.append(node("label", { className: "segment", attrs: { title: hint } },
@@ -772,27 +802,232 @@ class Application {
       ));
     }
     const eligible = countEligible(snapshot, this.difficulty, this.population);
+    const sizeChoices = node("div", { className: "segmented compact", attrs: { role: "group", "aria-label": "Cantidad de preguntas" } });
+    for (const size of [10, 20, 30]) {
+      const choice = button(String(size), this.configuredSize() === size ? "primary" : "secondary", () => {
+        this.otherSizeVisible = false;
+        this.setExamTotal(size);
+      });
+      choice.dataset.size = String(size);
+      choice.disabled = this.busy || this.stale;
+      choice.setAttribute("aria-pressed", String(this.configuredSize() === size));
+      sizeChoices.append(node("span", {}, choice));
+    }
+    const otherChoice = button("Otra cantidad", "secondary", () => {
+      this.otherSizeVisible = true;
+      this.syncStudyRoute();
+      this.shellRefs?.outlet.querySelector<HTMLInputElement>("#exam-size")?.focus();
+    });
+    otherChoice.dataset.action = "other-size";
+    otherChoice.disabled = this.busy || this.stale;
+    otherChoice.setAttribute("aria-controls", "other-exam-size");
+    otherChoice.setAttribute("aria-expanded", String(this.otherSizeVisible));
+    sizeChoices.append(node("span", {}, otherChoice));
+    const sizeInput = node("input", {
+      attrs: { id: "exam-size", type: "number", min: "1", max: String(MAX_RUN_SIZE), step: "1", inputmode: "numeric", "aria-describedby": "exam-configuration-status" },
+      on: { input: (event) => {
+        this.setExamTotal((event.currentTarget as HTMLInputElement).valueAsNumber);
+      } },
+    });
+    sizeInput.value = Number.isFinite(this.configuredSize()) ? String(this.configuredSize()) : "";
+    const otherSize = node("div", { attrs: { id: "other-exam-size" } },
+      node("div", { className: "field remote-import" }, node("label", { text: "Otra cantidad de preguntas", attrs: { for: "exam-size" } }), sizeInput),
+    );
+    otherSize.hidden = !this.otherSizeVisible;
+    const topicsGrid = node("div", { className: "topic-map", attrs: { id: "exam-topics", role: "group", "aria-label": "Temas del examen" } });
+    const available = countEligibleByTopic(snapshot, this.difficulty, this.population);
+    const counts = new Map(this.configuredTopicQuotas().map(({ topic, count }) => [topic, count]));
+    for (const [index, [topic, count]] of [...available].sort(([a], [b]) => a.localeCompare(b, "es")).entries()) {
+      const id = `exam-topic-${index}`;
+      const selected = this.selectedTopics.has(topic);
+      const value = counts.get(topic) ?? 0;
+      const toggle = button(topic, selected ? "primary" : "secondary", () => {
+        const total = this.configuredSize();
+        if (this.selectedTopics.has(topic)) this.selectedTopics.delete(topic);
+        else this.selectedTopics.add(topic);
+        this.setExamTotal(total);
+      });
+      toggle.dataset.topicToggle = topic;
+      toggle.setAttribute("aria-pressed", String(selected));
+      toggle.setAttribute("aria-describedby", `${id}-available`);
+      const minus = button("−", "secondary", () => this.stepExamTopic(topic, -1));
+      minus.dataset.topicMinus = topic;
+      minus.setAttribute("aria-label", `Quitar una pregunta de ${topic}`);
+      minus.disabled = !selected || value === 0 || this.busy || this.stale;
+      const plus = button("+", "secondary", () => this.stepExamTopic(topic, 1));
+      plus.dataset.topicPlus = topic;
+      plus.setAttribute("aria-label", `Agregar una pregunta de ${topic}`);
+      plus.disabled = !selected || value >= count || this.configuredSize() >= MAX_RUN_SIZE || this.busy || this.stale;
+      topicsGrid.append(node("div", { className: "topic-tile", data: { level: selected ? "3" : "none" } },
+        toggle,
+        node("div", { className: "button-row compact" }, minus,
+          node("output", { text: String(value), data: { topicCount: topic }, attrs: { "aria-label": `Cantidad de ${topic}` } }), plus),
+        node("small", { text: `${count} disponibles`, attrs: { id: `${id}-available` }, data: { topicAvailable: topic } }),
+      ));
+    }
+    const editor = node("div", { attrs: { id: "exam-editor" } },
+      node("h3", { text: "¿Cuántas preguntas?", attrs: { id: "exam-editor-heading", tabindex: "-1" } }),
+      sizeChoices, otherSize,
+      node("h3", { text: "¿Qué temas entran?" }),
+      node("p", { className: "supporting", text: "Tocá los temas para incluirlos o sacarlos. Cambiar el total o los temas reparte las preguntas automáticamente. Con −/+ ajustás solo ese tema y el total cambia con vos." }),
+      node("div", { className: "button-row compact" },
+        button("Todos los temas", "text-button", () => { const total = this.configuredSize(); this.selectedTopics = new Set(available.keys()); this.setExamTotal(total); }),
+        button("Ningún tema", "text-button", () => { const total = this.configuredSize(); this.selectedTopics.clear(); this.setExamTotal(total); }),
+        button("Repartir parejo", "secondary", () => this.setExamTotal(this.configuredSize())),
+      ),
+      topicsGrid,
+    );
+    editor.hidden = !this.setupEditorOpen;
     const startButton = button(
-      this.busy ? "Preparando y guardando…" : "Comenzar examen de 10 preguntas",
+      this.startExamLabel(),
       "primary",
       () => this.startRun(countEligible(this.snapshot!, this.difficulty, this.population)),
     );
     startButton.dataset.action = "start-exam";
-    startButton.disabled = this.busy || this.stale;
+    startButton.disabled = this.busy || this.stale || Boolean(this.examConfigurationError());
+    const saveSetup = button("Guardar reparto", "secondary", () => { this.rememberExamSetup(); this.syncStudyRoute(); });
+    saveSetup.dataset.action = "save-setup";
+    saveSetup.disabled = this.busy || this.stale || Boolean(this.examConfigurationError());
+    const restoreSetup = button("Usar reparto", "secondary", () => {
+      if (!this.savedSetup) return;
+      this.applyExamSetup(this.savedSetup);
+      this.setupNote = "Distribución recuperada. Se mantienen la dificultad y qué querés practicar; revisá las disponibles.";
+      this.setupEditorOpen = false;
+      this.syncStudyRoute();
+    });
+    restoreSetup.dataset.action = "restore-setup";
+    restoreSetup.disabled = this.busy || this.stale || !this.savedSetup;
+    const savedPanel = node("div", { className: "help-note", attrs: { id: "saved-exam-setup" } },
+      node("p", {}, node("strong", { text: this.savedSetupSummary(), attrs: { id: "saved-exam-summary" } })),
+      node("div", { className: "button-row compact" }, restoreSetup, button("Editar reparto", "text-button", () => {
+        this.setupEditorOpen = true;
+        this.syncStudyRoute();
+        this.shellRefs?.outlet.querySelector<HTMLElement>("#exam-editor-heading")?.focus();
+      })),
+    );
+    savedPanel.hidden = !this.savedSetup;
     wrapper.append(node("section", { className: "setup-panel" },
       node("div", { className: "section-heading" },
         node("div", {}, node("p", { className: "eyebrow", text: "A TU MANERA" }), node("h2", { text: "Armá tu examen" })),
       ),
+      savedPanel,
       node("div", { className: "exam-setup" },
         node("div", { className: "field" }, node("label", { text: "Dificultad", attrs: { for: "difficulty" } }), difficultySelect),
         node("div", { className: "field field-wide" }, node("span", { className: "field-label", text: "¿Qué querés practicar?", attrs: { id: "population-label" } }), populationGroup),
         node("div", { className: "start" },
+          editor,
+          node("strong", { text: `Total: ${this.configuredSize()} preguntas`, attrs: { id: "exam-total", role: "status", "aria-live": "polite" } }),
+          node("p", { className: "eligible", attrs: { id: "exam-configuration-status", role: "status", "aria-live": "polite" }, text: this.examConfigurationStatus() }),
+          node("p", { className: "supporting", attrs: { id: "exam-preview" } }, this.examPreview()),
+          node("div", { className: "button-row compact" }, saveSetup),
+          node("p", { className: "supporting", attrs: { id: "exam-setup-note", role: "status" }, text: this.setupNote }),
           startButton,
           node("p", { className: "eligible visually-hidden", data: { role: "eligible" }, attrs: { role: "status", "aria-live": "polite" }, text: `${eligible} disponibles con estos filtros` }),
         ),
       ),
     ));
     return wrapper;
+  }
+
+  private configuredSize(): number {
+    return this.customTopics ? [...this.topicCounts.values()].reduce((sum, count) => sum + count, 0) : this.requestedSize;
+  }
+
+  private setExamTotal(total: number): void {
+    this.requestedSize = total;
+    this.customTopics = false;
+    this.topicCounts.clear();
+    this.editExamSetup();
+  }
+
+  private stepExamTopic(topic: string, delta: -1 | 1): void {
+    if (!this.snapshot || this.busy || this.stale || !this.selectedTopics.has(topic)) return;
+    const next = stepTopicQuota(this.configuredTopicQuotas(), topic, delta,
+      countEligibleByTopic(this.snapshot, this.difficulty, this.population));
+    if (!next) return;
+    this.customTopics = true;
+    this.topicCounts = new Map(next.map(({ topic, count }) => [topic, count]));
+    this.editExamSetup();
+  }
+
+  private savedSetupSummary(): string {
+    if (!this.savedSetup) return "";
+    const custom = this.savedSetup.mode === "custom";
+    const total = custom ? this.savedSetup.topicQuotas.reduce((sum, q) => sum + q.count, 0) : this.savedSetup.total;
+    const topics = custom ? this.savedSetup.topicQuotas.length : this.savedSetup.selectedTopics.length;
+    return `Tu último reparto: ${total} preguntas · ${topics} ${topics === 1 ? "tema" : "temas"}`;
+  }
+
+  private configuredTopicQuotas(): TopicQuota[] {
+    return this.customTopics
+      ? [...this.topicCounts].filter(([, count]) => count !== 0).map(([topic, count]) => ({ topic, count }))
+      : distributeTopics(this.requestedSize, countEligibleByTopic(this.snapshot!, this.difficulty, this.population), this.selectedTopics);
+  }
+
+  private configuredAvailableCount(population = this.population): number {
+    const available = countEligibleByTopic(this.snapshot!, this.difficulty, population);
+    return [...available].reduce((sum, [topic, count]) => sum + (this.customTopics || this.selectedTopics.has(topic) ? count : 0), 0);
+  }
+
+  private examConfigurationError(): string | null {
+    if (!this.customTopics && this.selectedTopics.size === 0) return "Elegí al menos un tema para repartir las preguntas.";
+    const topicQuotas = this.customTopics ? this.configuredTopicQuotas() : undefined;
+    return topicQuotaError(
+      { requestedSize: this.configuredSize(), ...(topicQuotas ? { topicQuotas } : {}) },
+      countEligibleByTopic(this.snapshot!, this.difficulty, this.population),
+    );
+  }
+
+  private examConfigurationStatus(): string {
+    const error = this.examConfigurationError();
+    if (error) return error;
+    const actual = this.configuredTopicQuotas().reduce((sum, { count }) => sum + count, 0);
+    if (actual < this.configuredSize()) return `Pedís ${this.configuredSize()}; hay ${actual} disponibles en los temas elegidos. Al comenzar podrás aceptar un examen más corto o cambiar los filtros.`;
+    return `${actual} preguntas en total. ${this.customTopics ? "El total se calcula a partir de tus cantidades." : "Reparto automático entre los temas elegidos."}`;
+  }
+
+  private examPreview(): string {
+    if (this.examConfigurationError()) return "Ajustá la configuración para ver el resumen del examen.";
+    const quotas = this.configuredTopicQuotas();
+    const population = { nuevas: "Nuevas", falladas: "Falladas", todas: "Práctica inteligente" }[this.population];
+    return `${difficultyLabel(this.difficulty)} · ${population}. ${quotas.map(({ topic, count }) => `${topic}: ${count}`).join(" · ")}`;
+  }
+
+  private applyExamSetup(setup: ExamSetup): void {
+    this.customTopics = setup.mode === "custom";
+    this.requestedSize = setup.total;
+    this.selectedTopics = new Set([...setup.selectedTopics, ...(setup.mode === "custom" ? setup.topicQuotas.map((q) => q.topic) : [])]);
+    this.topicCounts = new Map(setup.topicQuotas.map(({ topic, count }) => [topic, count]));
+    this.otherSizeVisible = false;
+  }
+
+  private editExamSetup(): void {
+    this.setupNote = "Cambios sin guardar. Se recuerdan al comenzar o al tocar Guardar reparto.";
+    this.syncStudyRoute();
+  }
+
+  private rememberExamSetup(): void {
+    if (!this.snapshot || this.examConfigurationError()) return;
+    const setup: ExamSetup = {
+      version: 1, mode: this.customTopics ? "custom" : "auto",
+      total: Number.isInteger(this.requestedSize) && this.requestedSize >= 1 && this.requestedSize <= MAX_RUN_SIZE ? this.requestedSize : 10,
+      selectedTopics: [...this.selectedTopics],
+      topicQuotas: this.customTopics ? this.configuredTopicQuotas() : [],
+    };
+    if (saveExamSetup(this.snapshot.module.id, setup)) {
+      this.savedSetup = setup;
+      this.setupNote = "Reparto guardado: solo cantidad y temas. No incluye dificultad ni qué querés practicar; no cambia tu progreso.";
+    } else {
+      this.setupNote = "No se pudo guardar la configuración en este navegador. Podés usarla en esta sesión.";
+    }
+  }
+
+  private startExamLabel(): string {
+    if (this.busy) return "Preparando y guardando…";
+    const size = this.configuredSize();
+    return Number.isInteger(size) && size > 0 && size <= MAX_RUN_SIZE
+      ? `Comenzar examen de ${size} ${size === 1 ? "pregunta" : "preguntas"}`
+      : "Comenzar examen";
   }
 
   private syncStudyRoute(): void {
@@ -808,12 +1043,78 @@ class Application {
       count.textContent = String(countEligible(snapshot, this.difficulty, count.dataset.population as SelectionPopulation));
     }
     const eligible = countEligible(snapshot, this.difficulty, this.population);
+    const editor = outlet.querySelector<HTMLElement>("#exam-editor");
+    if (editor) editor.hidden = !this.setupEditorOpen;
+    const savedPanel = outlet.querySelector<HTMLElement>("#saved-exam-setup");
+    if (savedPanel) savedPanel.hidden = !this.savedSetup;
+    const savedSummary = outlet.querySelector<HTMLElement>("#saved-exam-summary");
+    if (savedSummary) savedSummary.textContent = this.savedSetupSummary();
+    const otherSize = outlet.querySelector<HTMLElement>("#other-exam-size");
+    if (otherSize) otherSize.hidden = !this.otherSizeVisible;
+    const otherChoice = outlet.querySelector<HTMLButtonElement>("[data-action=other-size]");
+    otherChoice?.setAttribute("aria-expanded", String(this.otherSizeVisible));
+    if (otherChoice) otherChoice.disabled = this.busy || this.stale;
+    const size = this.configuredSize();
+    for (const choice of outlet.querySelectorAll<HTMLButtonElement>("[data-size]")) {
+      const chosen = Number(choice.dataset.size) === size;
+      choice.setAttribute("aria-pressed", String(chosen));
+      choice.className = chosen ? "primary" : "secondary";
+      choice.disabled = this.busy || this.stale;
+    }
+    const total = outlet.querySelector<HTMLElement>("#exam-total");
+    if (total) total.textContent = Number.isInteger(size) ? `Total: ${size} preguntas` : "Elegí una cantidad válida";
+    const available = countEligibleByTopic(snapshot, this.difficulty, this.population);
+    const quotas = new Map(this.configuredTopicQuotas().map(({ topic, count }) => [topic, count]));
+    for (const toggle of outlet.querySelectorAll<HTMLButtonElement>("[data-topic-toggle]")) {
+      const selected = this.selectedTopics.has(toggle.dataset.topicToggle!);
+      toggle.setAttribute("aria-pressed", String(selected));
+      toggle.className = selected ? "primary" : "secondary";
+      toggle.disabled = this.busy || this.stale;
+      toggle.parentElement!.dataset.level = selected ? "3" : "none";
+    }
+    for (const output of outlet.querySelectorAll<HTMLElement>("[data-topic-count]")) {
+      output.textContent = String(quotas.get(output.dataset.topicCount!) ?? 0);
+    }
+    for (const label of outlet.querySelectorAll<HTMLElement>("[data-topic-available]")) {
+      label.textContent = `${available.get(label.dataset.topicAvailable!) ?? 0} disponibles`;
+    }
+    for (const minus of outlet.querySelectorAll<HTMLButtonElement>("[data-topic-minus]")) {
+      const topic = minus.dataset.topicMinus!;
+      minus.disabled = this.busy || this.stale || !this.selectedTopics.has(topic) || (quotas.get(topic) ?? 0) === 0;
+    }
+    for (const plus of outlet.querySelectorAll<HTMLButtonElement>("[data-topic-plus]")) {
+      const topic = plus.dataset.topicPlus!;
+      plus.disabled = this.busy || this.stale || !this.selectedTopics.has(topic) || size >= MAX_RUN_SIZE
+        || (quotas.get(topic) ?? 0) >= (available.get(topic) ?? 0);
+    }
+    const status = outlet.querySelector<HTMLElement>("#exam-configuration-status");
+    if (status) status.textContent = this.examConfigurationStatus();
+    const sizeInput = outlet.querySelector<HTMLInputElement>("#exam-size");
+    if (sizeInput) {
+      if (this.customTopics || document.activeElement !== sizeInput) sizeInput.value = Number.isFinite(size) ? String(size) : "";
+      sizeInput.setAttribute("aria-invalid", String(!Number.isInteger(size) || size < 1 || size > MAX_RUN_SIZE));
+    }
+    const preview = outlet.querySelector<HTMLElement>("#exam-preview");
+    if (preview) preview.textContent = this.examPreview();
+    const setupNote = outlet.querySelector<HTMLElement>("#exam-setup-note");
+    if (setupNote) setupNote.textContent = this.setupNote;
+    for (const action of outlet.querySelectorAll<HTMLButtonElement>(".setup-panel .button-row button")) {
+      if (action.hasAttribute("data-topic-minus") || action.hasAttribute("data-topic-plus")) continue;
+      action.disabled = this.busy || this.stale
+        || (action.dataset.action === "save-setup" && Boolean(this.examConfigurationError()))
+        || (action.dataset.action === "restore-setup" && !this.savedSetup);
+    }
     const copy = outlet.querySelector<HTMLElement>("[data-role=eligible]");
     if (copy) copy.textContent = `${eligible} disponibles con estos filtros`;
     const startButton = outlet.querySelector<HTMLButtonElement>("[data-action=start-exam]");
     if (startButton) {
-      startButton.disabled = this.busy || this.stale;
-      startButton.textContent = this.busy ? "Preparando y guardando…" : "Comenzar examen de 10 preguntas";
+      startButton.disabled = this.busy || this.stale || Boolean(this.examConfigurationError());
+      startButton.textContent = this.startExamLabel();
+    }
+    // The coach can be rendered while an abandoned run is still saving.
+    // Re-enable its independent quick actions once that mutation finishes.
+    for (const action of outlet.querySelectorAll<HTMLButtonElement>(".coach-actions button")) {
+      action.disabled = this.busy || this.stale;
     }
   }
 
@@ -1406,7 +1707,7 @@ class Application {
     }
     this.difficulty = "mixta";
     this.population = step.kind === "mixed" ? "todas" : "nuevas";
-    await this.startRun(countEligible(this.snapshot, this.difficulty, this.population));
+    await this.startRun(countEligible(this.snapshot, this.difficulty, this.population), false);
   }
 
   private renderKpiRow(insights: StudyInsights): HTMLElement {
@@ -1525,7 +1826,7 @@ class Application {
     if (!this.snapshot) return;
     this.difficulty = "mixta";
     this.population = "falladas";
-    await this.startRun(countEligible(this.snapshot, "mixta", "falladas"));
+    await this.startRun(countEligible(this.snapshot, "mixta", "falladas"), false);
   }
 
   private async practiceQuestions(questionIds: string[]): Promise<void> {
@@ -1903,18 +2204,25 @@ class Application {
     }
   }
 
-  private async startRun(eligible: number): Promise<void> {
+  private async startRun(eligible: number, configured = true): Promise<void> {
     if (!this.snapshot || this.busy || this.stale) return;
-    let acceptedSize = 10;
-    if (eligible < 10) {
+    if (configured && this.examConfigurationError()) { this.syncStudyRoute(); return; }
+    if (configured) eligible = this.configuredAvailableCount();
+    const requestedSize = configured ? this.configuredSize() : 10;
+    let topicQuotas = configured ? this.configuredTopicQuotas() : undefined;
+    const questionIds = configured && !this.customTopics
+      ? this.snapshot.questions.filter((q) => this.selectedTopics.has(q.topic)).map((q) => q.id)
+      : undefined;
+    let acceptedSize = requestedSize;
+    if (eligible < requestedSize) {
       const choices: Array<[string, string, string]> = [["return", "Cambiar filtros", "secondary"]];
-      if (this.population === "nuevas" && countEligible(this.snapshot, this.difficulty, "todas") >= 10) choices.push(["all", "Incluir evaluadas", "primary"]);
+      if (this.population === "nuevas" && (configured ? this.configuredAvailableCount("todas") : countEligible(this.snapshot, this.difficulty, "todas")) >= requestedSize) choices.push(["all", "Incluir evaluadas", "primary"]);
       if (eligible > 0) choices.push(["short", `Empezar con ${eligible}`, "secondary"]);
       const noFailed = eligible === 0 && this.population === "falladas";
       const choice = await this.ask(
         noFailed
           ? "No tenés falladas pendientes"
-          : eligible === 0 && this.population === "nuevas" ? "Ya recorriste todas las preguntas nuevas" : "No llegan a 10 preguntas",
+          : eligible === 0 && this.population === "nuevas" ? "Ya recorriste todas las preguntas nuevas" : `No llegan a ${requestedSize} preguntas`,
         noFailed
           ? "Todo lo que fallaste ya lo respondiste bien después. Probá con Práctica inteligente o cambiá la dificultad."
           : eligible === 0 ? "Con estos filtros no quedan preguntas. La aplicación nunca repite ni cambia el filtro en silencio." : `Hay ${eligible} preguntas disponibles. Elegí cómo continuar.`,
@@ -1923,17 +2231,28 @@ class Application {
       if (choice === "all") { this.population = "todas"; this.syncStudyRoute(); return; }
       if (choice !== "short") return;
       acceptedSize = eligible;
+      // The accepted shorter run contains every eligible question from the selected topics.
+      // Keep the original requested size; exact quotas only apply to a full run.
+      topicQuotas = undefined;
     }
     const seed = randomSeed();
     try {
       const request = {
         difficulty: this.difficulty,
         population: this.population,
-        requestedSize: 10 as const,
+        requestedSize,
         acceptedSize,
         seed,
+        ...(topicQuotas ? { topicQuotas } : {}),
+        ...(questionIds ? { questionIds } : {}),
       };
-      if (await this.commit((current) => createActiveRun(current, request, new Date().toISOString()))) this.setView("exam");
+      if (await this.commit((current) => createActiveRun(current, request, new Date().toISOString()))) {
+        if (configured) {
+          this.rememberExamSetup();
+          if (this.setupNote.startsWith("No se pudo")) this.notice = { kind: "warning", title: "Configuración solo en esta sesión", detail: this.setupNote };
+        }
+        this.setView("exam");
+      }
     } catch (error) {
       this.notice = { kind: "error", title: "No se pudo preparar el examen", detail: String(error) };
       this.render();
@@ -2076,7 +2395,7 @@ class Application {
     const steps = node("ol", { className: "help-steps" });
     for (const [title, detail] of [
       ["Cargá tus preguntas", "Elegí un archivo .study.json o usá Cargar desde enlace si ya está publicado en la web. La app llama módulo a ese archivo: contiene tus preguntas y puede incluir progreso anterior. Solo la carga por enlace necesita internet."],
-      ["Prepará un examen", "En Estudiar elegí la dificultad y qué practicar: Nuevas para avanzar, Falladas para repasar tus errores o Práctica inteligente, que mezcla todo priorizando lo que más necesitás. Cada examen tiene hasta 10 preguntas; si no alcanzan, la app te avisa."],
+      ["Prepará un examen", "En Armá tu examen elegí la dificultad y qué practicar. Tocá 10, 20, 30 u Otra cantidad y activá los temas: el reparto se equilibra solo. Con −/+ ajustás un tema y el total sin cambiar los demás; Repartir parejo vuelve a equilibrarlos. Guardar reparto recuerda la cantidad y el reparto para esta materia; también se guarda al comenzar. En Tu último reparto podés usarlo o editarlo sin cambiar la dificultad ni qué querés practicar. Las recomendaciones rápidas siguen siendo de hasta 10 preguntas."],
       ["Respondé y revisá", "Podés volver con Anterior o los números. Pausar examen conserva tus respuestas sin corregirlas. Entregar examen muestra el resultado, las explicaciones y las fuentes."],
       ["Guardá una copia para seguir después", "Usá Guardar archivo… y comprobá la descarga. Incluye tus preguntas y tu progreso, incluso un examen pausado. Para cambiar de dispositivo, cargá ese archivo más reciente."],
     ] as const) steps.append(node("li", {}, node("h3", { text: title }), node("p", { text: detail })));

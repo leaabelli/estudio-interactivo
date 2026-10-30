@@ -1,5 +1,6 @@
 import {
   DIFFICULTIES,
+  MAX_RUN_SIZE,
   type Difficulty,
   type DifficultyFilter,
   type QuestionProgress,
@@ -89,6 +90,51 @@ export function countEligible(
     }
   }
   return count;
+}
+
+export function countEligibleByTopic(
+  snapshot: StudySnapshot,
+  difficulty: DifficultyFilter,
+  population: SelectionPopulation
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const question of snapshot.questions) {
+    if (!counts.has(question.topic)) counts.set(question.topic, 0);
+    if (isEligible(snapshot, question, difficulty, population)) {
+      counts.set(question.topic, counts.get(question.topic)! + 1);
+    }
+  }
+  return counts;
+}
+
+/** Quotas are exact: never silently shorten or redistribute a custom exam. */
+export function topicQuotaError(
+  request: Pick<SelectionRequest, "requestedSize" | "topicQuotas" | "acceptedSize">,
+  available: ReadonlyMap<string, number>
+): string | null {
+  if (!Number.isInteger(request.requestedSize) || request.requestedSize < 1 || request.requestedSize > MAX_RUN_SIZE) {
+    return `Elegí una cantidad entera entre 1 y ${MAX_RUN_SIZE}.`;
+  }
+  if (!request.topicQuotas) return null;
+  if (request.acceptedSize !== undefined && request.acceptedSize !== request.requestedSize) {
+    return "La distribución por tema no admite un examen reducido. Ajustá las cantidades.";
+  }
+  const seen = new Set<string>();
+  let total = 0;
+  for (const { topic, count } of request.topicQuotas) {
+    if (!available.has(topic) || seen.has(topic)) return `Tema desconocido o repetido: ${topic}.`;
+    seen.add(topic);
+    if (!Number.isInteger(count) || count < 1 || count > MAX_RUN_SIZE) {
+      return `La cantidad de «${topic}» debe ser un entero positivo.`;
+    }
+    if (count > available.get(topic)!) {
+      return `«${topic}»: pedís ${count}, pero hay ${available.get(topic)} disponibles con estos filtros.`;
+    }
+    total += count;
+  }
+  return total === request.requestedSize
+    ? null
+    : `Asignaste ${total} de ${request.requestedSize} preguntas. La suma por tema debe coincidir con el total.`;
 }
 
 /** Detailed exams completed since the question was last answered; unknown counts as long ago. */
@@ -200,6 +246,14 @@ function mixedSelection(
 ): StudyQuestion[] {
   const pools = new Map<Difficulty, StudyQuestion[]>();
   const selected: StudyQuestion[] = [];
+  // Largest remainders keep the 3/3/2/2 mix proportional for every exam size.
+  const targets = DIFFICULTIES.map((difficulty) => Math.floor(size * MIXED_TARGETS[difficulty] / 10));
+  const remainderOrder = DIFFICULTIES.map((difficulty, index) => ({
+    index,
+    remainder: (size * MIXED_TARGETS[difficulty]) % 10
+  })).sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  const remaining = size - targets.reduce((sum, target) => sum + target, 0);
+  for (const { index } of remainderOrder.slice(0, remaining)) targets[index]! += 1;
 
   for (const difficulty of DIFFICULTIES) {
     const questions = eligible.filter((question) => question.difficulty === difficulty);
@@ -210,7 +264,7 @@ function mixedSelection(
       request.seed,
       `selection.${difficulty}`
     );
-    const target = Math.min(MIXED_TARGETS[difficulty], ranked.length);
+    const target = Math.min(targets[DIFFICULTIES.indexOf(difficulty)]!, ranked.length);
     selected.push(...ranked.slice(0, target));
     pools.set(difficulty, ranked.slice(target));
   }
@@ -250,8 +304,8 @@ export function selectQuestions(
   snapshot: StudySnapshot,
   request: SelectionRequest
 ): StudyQuestion[] {
-  if (request.requestedSize !== 10) {
-    throw new RangeError("requestedSize must be exactly 10.");
+  if (!Number.isInteger(request.requestedSize) || request.requestedSize < 1 || request.requestedSize > MAX_RUN_SIZE) {
+    throw new RangeError(`requestedSize must be an integer from 1 through ${MAX_RUN_SIZE}.`);
   }
   if (
     !Number.isInteger(request.seed) ||
@@ -265,12 +319,28 @@ export function selectQuestions(
   const eligible = snapshot.questions.filter((question) =>
     isEligible(snapshot, question, request.difficulty, request.population, questionIds)
   );
+  if (request.topicQuotas) {
+    const available = new Map(snapshot.questions.map((question) => [question.topic, 0]));
+    for (const question of eligible) available.set(question.topic, available.get(question.topic)! + 1);
+    const error = topicQuotaError(request, available);
+    if (error) throw new RangeError(error);
+  }
   const size = selectedSize(request, eligible.length);
 
-  const selected =
-    request.difficulty === "mixta"
-      ? mixedSelection(snapshot, request, eligible, size)
-      : fixedSelection(snapshot, request, eligible, size);
+  const selectPool = (pool: readonly StudyQuestion[], count: number, poolRequest = request) =>
+    poolRequest.difficulty === "mixta"
+      ? mixedSelection(snapshot, poolRequest, pool, count)
+      : fixedSelection(snapshot, poolRequest, pool, count);
+  const selected = request.topicQuotas
+    ? deterministicShuffle(
+        [...request.topicQuotas].sort((a, b) => a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : 0)
+          .flatMap(({ topic, count }) => selectPool(
+            eligible.filter((question) => question.topic === topic), count,
+            { ...request, seed: (request.seed ^ fnv1aUtf8(topic)) >>> 0 }
+          )),
+        (request.seed ^ fnv1aUtf8("selection.question-order")) >>> 0
+      )
+    : selectPool(eligible, size);
 
   if (selected.length !== size || new Set(selected.map((question) => question.id)).size !== size) {
     throw new Error("Selection invariant failed: expected a unique, complete selection.");

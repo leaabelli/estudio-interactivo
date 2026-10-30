@@ -19,7 +19,7 @@ El archivo local funciona sin internet; el enlace requiere conexión al cargar. 
 
 # 2. Prepará un examen
 
-Entrá a **Estudiar**. Arriba, la app te sugiere qué hacer según tus resultados. Cada examen tiene hasta 10 preguntas.
+Entrá a **Estudiar**. Arriba, la app sugiere prácticas de hasta 10 preguntas. Más abajo podés armar un examen con la cantidad y los temas que elijas.
 
 ![Tu próximo paso: la recomendación resaltada, el botón para empezar y tu última nota.](images/manual/02-preparar.png)
 
@@ -30,13 +30,17 @@ Entrá a **Estudiar**. Arriba, la app te sugiere qué hacer según tus resultado
 
 ### Armá tu examen
 
-Más abajo elegís vos. **Dificultad:** Fácil, Medio, Difícil, Experto o **Aleatoria**. **¿Qué querés practicar?:** **Nuevas** (nunca respondidas), **Falladas** (las que respondiste mal la última vez) o **Práctica inteligente**, que mezcla todo y prioriza lo que más te cuesta.
+Elegí **Dificultad** y qué practicar: **Nuevas**, **Falladas** o **Práctica inteligente**. Los temas son los que trae cada módulo.
 
-### Si quedan pocas preguntas
+Elegí **10**, **20**, **30** u **Otra cantidad** y activá los temas que entran. Al cambiar el total o los temas, la app reparte las preguntas lo más parejo posible.
 
-La app te avisa cuando no alcanza para 10. Podés cambiar los filtros o aceptar un examen más corto. Si no queda ninguna nueva, elegí otro nivel o usá **Práctica inteligente**.
+Usá **− / +** para ajustar un tema: cambia ese tema y el total, sin tocar los demás. **Repartir parejo** vuelve a equilibrarlos. Revisá el resumen antes de empezar.
 
-> Una pregunta cuenta como evaluada cuando entregás el examen, aunque la respuesta sea incorrecta. Mirarla o dejarla en un examen pausado todavía no aumenta la cobertura.
+### Reutilizá tu configuración
+
+**Guardar reparto** recuerda cantidad y temas por materia; también se guardan al comenzar. En **Tu último reparto**, tocá **Usar reparto** o **Editar reparto**. No cambia la dificultad ni qué querés practicar. Es local a este navegador: no viaja en el archivo ni cambia tu progreso.
+
+> Si no alcanza: en automático, podés aceptar un examen más corto. Con cantidades por tema, ajustá las cuotas o los filtros; la app no las reemplaza por otros temas.
 
 <!-- pagebreak -->
 

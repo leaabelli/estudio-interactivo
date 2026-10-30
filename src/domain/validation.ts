@@ -1,5 +1,7 @@
 import {
   DIFFICULTIES,
+  MAX_RUN_SIZE,
+  type RunBase,
   type CompletedRun,
   type Difficulty,
   type QuestionProgress,
@@ -850,12 +852,25 @@ function validateQuestionProgressStructure(value: unknown, path: string, errors:
 }
 
 function validateFiltersStructure(value: unknown, path: string, errors: Errors): void {
-  const filters = exactObject(value, path, ["difficulty", "population", "requestedSize", "acceptedSize"], [], errors);
+  const filters = exactObject(value, path, ["difficulty", "population", "requestedSize", "acceptedSize"], ["topicQuotas"], errors);
   if (!filters) return;
   oneOfStrings(filters.difficulty, [...DIFFICULTIES, "mixta"], `${path}.difficulty`, errors);
   oneOfStrings(filters.population, ["nuevas", "todas"], `${path}.population`, errors);
-  literal(filters.requestedSize, 10, `${path}.requestedSize`, errors);
-  integerInRange(filters.acceptedSize, `${path}.acceptedSize`, 1, 10, errors);
+  integerInRange(filters.requestedSize, `${path}.requestedSize`, 1, MAX_RUN_SIZE, errors);
+  integerInRange(filters.acceptedSize, `${path}.acceptedSize`, 1, MAX_RUN_SIZE, errors);
+  if (hasOwn(filters, "topicQuotas")) {
+    if (!Array.isArray(filters.topicQuotas) || filters.topicQuotas.length < 1 || filters.topicQuotas.length > MAX_RUN_SIZE) {
+      errors.add(`${path}.topicQuotas`, `debe contener entre 1 y ${MAX_RUN_SIZE} temas`);
+    } else {
+      filters.topicQuotas.forEach((value, index) => {
+        const quotaPath = `${path}.topicQuotas[${index}]`;
+        const quota = exactObject(value, quotaPath, ["topic", "count"], [], errors);
+        if (!quota) return;
+        stringInRange(quota.topic, `${quotaPath}.topic`, 1, 120, errors);
+        integerInRange(quota.count, `${quotaPath}.count`, 1, MAX_RUN_SIZE, errors);
+      });
+    }
+  }
 }
 
 function validateRunItemStructure(value: unknown, path: string, errors: Errors): void {
@@ -912,10 +927,10 @@ function validateRunCommonStructure(run: UnknownRecord, path: string, errors: Er
   validateFiltersStructure(run.filters, `${path}.filters`, errors);
   integerInRange(run.coverageBeforeCount, `${path}.coverageBeforeCount`, 0, 5000, errors);
   if (!Array.isArray(run.items)) {
-    errors.add(`${path}.items`, "debe ser una lista de 1 a 10 preguntas");
+    errors.add(`${path}.items`, `debe ser una lista de 1 a ${MAX_RUN_SIZE} preguntas`);
   } else {
-    if (run.items.length < 1 || run.items.length > 10) {
-      errors.add(`${path}.items`, "debe contener entre 1 y 10 preguntas");
+    if (run.items.length < 1 || run.items.length > MAX_RUN_SIZE) {
+      errors.add(`${path}.items`, `debe contener entre 1 y ${MAX_RUN_SIZE} preguntas`);
     }
     run.items.forEach((item, index) => validateRunItemStructure(item, `${path}.items[${index}]`, errors));
   }
@@ -928,7 +943,7 @@ function validateActiveRunStructure(value: unknown, path: string, errors: Errors
   literal(run.completedStateRevision, null, `${path}.completedStateRevision`, errors);
   literal(run.status, "active", `${path}.status`, errors);
   literal(run.submittedAt, null, `${path}.submittedAt`, errors);
-  integerInRange(run.currentIndex, `${path}.currentIndex`, 0, 9, errors);
+  integerInRange(run.currentIndex, `${path}.currentIndex`, 0, MAX_RUN_SIZE - 1, errors);
 }
 
 function validateCompletedRunStructure(value: unknown, path: string, errors: Errors): void {
@@ -938,8 +953,8 @@ function validateCompletedRunStructure(value: unknown, path: string, errors: Err
   positiveRevision(run.completedStateRevision, `${path}.completedStateRevision`, errors);
   literal(run.status, "completed", `${path}.status`, errors);
   validTimestamp(run.submittedAt, `${path}.submittedAt`, errors);
-  integerInRange(run.correctCount, `${path}.correctCount`, 0, 10, errors);
-  integerInRange(run.incorrectCount, `${path}.incorrectCount`, 0, 10, errors);
+  integerInRange(run.correctCount, `${path}.correctCount`, 0, MAX_RUN_SIZE, errors);
+  integerInRange(run.incorrectCount, `${path}.incorrectCount`, 0, MAX_RUN_SIZE, errors);
   integerInRange(run.coverageAfterCount, `${path}.coverageAfterCount`, 0, 5000, errors);
 }
 
@@ -1115,6 +1130,40 @@ function validateQuestionSemantics(
   }
 }
 
+function validateRunDistribution(
+  run: RunBase,
+  questionById: ReadonlyMap<string, StudyQuestion>,
+  path: string,
+  errors: Errors
+): void {
+  if (run.filters.acceptedSize > run.filters.requestedSize) {
+    errors.add(`${path}.filters.acceptedSize`, "no puede superar requestedSize");
+  }
+  const quotas = run.filters.topicQuotas;
+  if (!quotas) return;
+  const actual = new Map<string, number>();
+  for (const item of run.items) {
+    const question = questionById.get(item.questionId);
+    if (question) actual.set(question.topic, (actual.get(question.topic) ?? 0) + 1);
+  }
+  const seen = new Set<string>();
+  let total = 0;
+  for (const [index, quota] of quotas.entries()) {
+    if (seen.has(quota.topic)) errors.add(`${path}.filters.topicQuotas[${index}].topic`, "el tema está repetido");
+    seen.add(quota.topic);
+    total += quota.count;
+    if (actual.get(quota.topic) !== quota.count) {
+      errors.add(`${path}.filters.topicQuotas[${index}].count`, "debe coincidir con las preguntas del tema en items");
+    }
+  }
+  if (total !== run.filters.requestedSize || run.filters.acceptedSize !== run.filters.requestedSize) {
+    errors.add(`${path}.filters.topicQuotas`, "la suma debe coincidir con requestedSize y acceptedSize");
+  }
+  if ([...actual.keys()].some((topic) => !seen.has(topic))) {
+    errors.add(`${path}.items`, "contiene temas fuera de la distribución solicitada");
+  }
+}
+
 function validateRunSemantics(
   snapshot: StudySnapshot,
   questionById: ReadonlyMap<string, StudyQuestion>,
@@ -1135,6 +1184,7 @@ function validateRunSemantics(
   for (let runIndex = 0; runIndex < progress.runs.length; runIndex += 1) {
     const run = progress.runs[runIndex] as CompletedRun;
     const path = `$.progress.runs[${runIndex}]`;
+    validateRunDistribution(run, questionById, path, errors);
     registerId(run.id, `${path}.id`);
     const expectedId = expectedRunId(run.createdStateRevision, run.seed);
     if (run.id !== expectedId) errors.add(`${path}.id`, `debe ser ${expectedId}`);
@@ -1245,6 +1295,7 @@ function validateRunSemantics(
   const active = progress.activeRun;
   if (active) {
     const path = "$.progress.activeRun";
+    validateRunDistribution(active, questionById, path, errors);
     registerId(active.id, `${path}.id`);
     const expectedId = expectedRunId(active.createdStateRevision, active.seed);
     if (active.id !== expectedId) errors.add(`${path}.id`, `debe ser ${expectedId}`);
@@ -1339,8 +1390,8 @@ function validateSummarySemantics(snapshot: StudySnapshot, errors: Errors): void
     } else if (timestampMillis(summary.firstSubmittedAt) > timestampMillis(summary.lastSubmittedAt)) {
       errors.add(`${path}.lastSubmittedAt`, "no puede ser anterior a firstSubmittedAt");
     }
-    if (summary.attemptCount < summary.runCount || summary.attemptCount > summary.runCount * 10) {
-      errors.add(`${path}.attemptCount`, "debe representar entre 1 y 10 intentos por ejecución compactada");
+    if (summary.attemptCount < summary.runCount || summary.attemptCount > summary.runCount * snapshot.questions.length) {
+      errors.add(`${path}.attemptCount`, "debe representar entre 1 y la cantidad de preguntas del módulo por ejecución compactada");
     }
   }
 }

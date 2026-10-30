@@ -35,6 +35,7 @@ describe("canonical JSON Schema", () => {
       "dontKnowAnswer",
       "questionProgress",
       "runFilters",
+      "topicQuota",
       "runItem",
       "activeRun",
       "completedRun",

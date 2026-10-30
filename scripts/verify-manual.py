@@ -30,6 +30,12 @@ def main() -> None:
     for expected in [
         "Cargá tus preguntas",
         "Prepará un examen",
+        "Otra cantidad",
+        "Repartir parejo",
+        "Tu último reparto",
+        "Guardar reparto",
+        "Usar reparto",
+        "Editar reparto",
         "Respondé a tu ritmo",
         "Aprendé de la corrección",
         "Mirá cómo venís",

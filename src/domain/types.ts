@@ -7,6 +7,12 @@ export type Population = "nuevas" | "todas";
  * run filters as "todas" so files stay readable by every app version.
  */
 export type SelectionPopulation = Population | "falladas";
+export const MAX_RUN_SIZE = 5000;
+
+export interface TopicQuota {
+  topic: string;
+  count: number;
+}
 
 export interface StudyOption {
   id: string;
@@ -79,8 +85,10 @@ export interface QuestionProgress {
 export interface RunFilters {
   difficulty: DifficultyFilter;
   population: Population;
-  requestedSize: 10;
+  requestedSize: number;
   acceptedSize: number;
+  /** Exact topic distribution; omitted for automatic selection and legacy runs. */
+  topicQuotas?: TopicQuota[];
 }
 
 export interface RunItem {
@@ -149,11 +157,12 @@ export interface StudySnapshot {
 export interface SelectionRequest {
   difficulty: DifficultyFilter;
   population: SelectionPopulation;
-  requestedSize: 10;
+  requestedSize: number;
   acceptedSize?: number;
   seed: number;
   /** Restricts the pool to these question IDs (for example, one exam's mistakes). */
   questionIds?: readonly string[];
+  topicQuotas?: readonly TopicQuota[];
 }
 
 export interface StudyMetrics {
