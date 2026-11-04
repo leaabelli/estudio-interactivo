@@ -602,7 +602,7 @@ p { max-width: 68ch; }
 .answer-box.is-correct .answer-box-label { color: var(--success); }
 .answer-box-icon { font-size: 0.9rem; }
 .result-answer { margin: 0.35rem 0; }
-.explanation { padding: 0.9rem 1rem; border-radius: 0.8rem; background: var(--surface-soft); line-height: 1.6; }
+.explanation { padding: 0.9rem 1rem; border-radius: 0.8rem; background: var(--surface-soft); line-height: 1.6; white-space: pre-line; }
 .explanation p { margin: 0; }
 .explanation-label { display: block; margin-bottom: 0.3rem; color: var(--primary); font-size: 0.72rem; font-weight: 780; letter-spacing: 0.05em; text-transform: uppercase; }
 .question-source--review { max-width: none; margin: 0; }
